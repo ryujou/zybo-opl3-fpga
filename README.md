@@ -1,17 +1,24 @@
-# OPL3 FPGA for Zybo
+# Zybo OPL3 FPGA
 
-这是一个面向 Digilent Zybo 开发板的 OPL3 FPGA 工程，核心目标是在 Zynq-7000 平台上复现 Yamaha YMF262（OPL3）FM 合成器，并提供一个可直接上板运行的播放器系统。
+这是一个面向 Digilent Zybo 开发板的 OPL3 FPGA 独立项目，目标是在 Zynq-7000 平台上复现 Yamaha YMF262（OPL3）FM 合成器，并提供一个可直接上板运行的裸机播放器系统。
 
-当前仓库已经整理为 `Vivado/Vitis 2025.2` 构建流程，并在 Zybo 板上完成了实际启动、串口交互和音频播放验证。
+当前仓库已经整理为 `Vivado/Vitis 2025.2` 版本，构建流程、上板启动和音频播放都已完成实机验证，适合作为 Zybo 上的 OPL3 复现与学习工程长期维护。
+
+## 项目定位
+
+- 面向 `Digilent Zybo`
+- 面向 `Vivado/Vitis 2025.2`
+- 软件侧采用 `bare-metal standalone`
+- 保留串口命令行播放器和 `.dro` 文件播放能力
 
 ## 当前状态
 
-- 构建工具链固定为 `Vivado 2025.2 + Vitis 2025.2`
 - 已验证完整构建链：
   - `BD -> bitstream -> xsa -> Vitis app -> BOOT.bin`
-- 已完成上板验证：
+- 已完成实机验证：
   - SD 启动成功
   - 串口 CLI 正常
+  - `help / ls / play` 命令正常
   - `play doom_000.dro` 可实际出声
 
 ## 工程结构
