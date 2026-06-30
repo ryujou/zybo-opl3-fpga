@@ -8,9 +8,8 @@ set IP_SRC [lindex $argv 5]
 set outputDir build
 
 create_project -part xc7z010clg400-1 -in_memory
-set localBoardRepo [file normalize "J:/FPGA/board_files/vivado-boards/new/board_files"]
-if { [file isdirectory $localBoardRepo] } {
-    set_param board.repoPaths [list $localBoardRepo]
+if { [info exists ::env(OPL3_BOARD_REPO)] && [file isdirectory $::env(OPL3_BOARD_REPO)] } {
+    set_param board.repoPaths [list [file normalize $::env(OPL3_BOARD_REPO)]]
 }
 set_property target_language Verilog [current_project]
 set_property default_lib work [current_project]

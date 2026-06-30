@@ -61,9 +61,9 @@
 Windows 下建议保证以下目录已加入 `PATH`：
 
 ```text
-J:\FPGA\2025.2\Vivado\bin
-J:\FPGA\2025.2\Vitis\bin
-J:\FPGA\2025.2\Vitis\gnuwin\bin
+<Vivado 2025.2 安装目录>\Vivado\bin
+<Vitis 2025.2 安装目录>\Vitis\bin
+<Vitis 2025.2 安装目录>\Vitis\gnuwin\bin
 ```
 
 ### 2. Digilent Zybo board files
@@ -77,14 +77,14 @@ J:\FPGA\2025.2\Vitis\gnuwin\bin
 如果 `Vivado 2025.2` 没有自动识别 Zybo，可在 Tcl 中设置：
 
 ```tcl
-set_param board.repoPaths {J:/FPGA/board_files/vivado-boards/new/board_files}
+set_param board.repoPaths {/path/to/vivado-boards/new/board_files}
 ```
 
 官方 Zybo 参考资料：
 
 - <https://digilent.com/reference/programmable-logic/zybo/reference-manual>
 
-本地历史目录 `D:\DATA\资料\graduation_project\ZYBO` 仅作为旧资料参考，不属于正式依赖。
+历史参考资料目录仅作为旧工程比对使用，不属于正式依赖。
 
 ## 构建方法
 
