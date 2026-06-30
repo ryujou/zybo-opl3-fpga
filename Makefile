@@ -5,10 +5,10 @@
 #   AUTHOR: Greg Taylor      CREATION DATE: 8 Aug 2015
 #
 #   DESCRIPTION:
-#	1. Source the Vivado and SDK settings so all the build tools are in your
+#	1. Source the Vivado and Vitis settings so all the build tools are in your
 #      path.
-#      E.g. source /opt/Xilinx/Vivado/2015.1/settings64.sh
-#           source /opt/Xilinx/SDK/2015.1/settings64.sh
+#      E.g. source /opt/Xilinx/Vivado/2025.2/settings64.sh
+#           source /opt/Xilinx/Vitis/2025.2/settings64.sh
 #
 #	2. Run 'make' to build all the FPGA and software necessary to run the OPL3
 #	   and create an SD card image.

@@ -10,7 +10,7 @@ opl3_fpga
 2024-4-10
 * Massive refactoring. I changed up the top level interface/bus protocol to better match the real chip and make it easier to integrate into other projects. The register map is now internal instead of an external AXI version. Clock domain
 crossing logic is included to go between CPU and OPL3. This along with significant internal logic reduction work has massively cut down the area. LUT utilization was reduced by 78%, registers by 89%.
-The Zybo design also now requires Vivado/Vitis 2023.2 (though the SystemVerilog syntax has been slightly dumbed down to support Quartus 17 for easier integration with other certain projects). 2023.2 is a lot more version control friendly and the repo is a lot cleaner now. There's also some bug fixes regarding rhythm and timers/irq are now properly implemented (but still optional).
+The Zybo design now builds against Vivado/Vitis 2025.2 (though the SystemVerilog syntax has been slightly dumbed down to support Quartus 17 for easier integration with other certain projects). The repo is script-driven and version control friendly, and there are bug fixes regarding rhythm plus properly implemented optional timers/irq support.
 
 2019-11-7
 * The OPL2 subset of OPL3_FPGA was converted to Verilog by Magnus Karlsson, and then ported to the Panologic thin client (a Spartan-3E based board) by Skip Hansen. The project can be found here: https://github.com/skiphansen/panog1_opl3
@@ -148,14 +148,32 @@ Set your terminal to 115200 baud, 8-N-1.
     >play doom_000.dro
     DRO 2.0 file
 
-## Build/run instructions (Linux)
+## Zybo board files
+This repository builds directly from the Zynq part and does not require a checked-in `.xpr`, but installing the official Digilent board files is still recommended for manual Vivado work and board verification.
+
+Official Digilent board files:
+* https://github.com/Digilent/vivado-boards
+
+If Vivado 2025.2 does not already see the Zybo board definitions, point it at the cloned board repo:
+
+        set_param board.repoPaths {J:/FPGA/board_files/vivado-boards/new/board_files}
+
+Official Zybo reference material:
+* https://digilent.com/reference/programmable-logic/zybo/reference-manual
+
+Historical local reference projects under `D:\DATA\资料\graduation_project\ZYBO` are not used by this build flow.
+
+## Build/run instructions (Vivado/Vitis 2025.2)
 1. If you want to add any .dro files, you may place them in software/opl3dro.
 They will be included in the in-memory filesystem for playback.
 
-2. Source the Vivado and SDK settings so all the build tools are in your path.
+2. Ensure the Vivado, Vitis, `bootgen`, and `mfsgen` tools are in your path.
 Example:
 
-        source /opt/Xilinx/Vivado/2023.2/settings64.sh
+        source /opt/Xilinx/Vivado/2025.2/settings64.sh
+        source /opt/Xilinx/Vitis/2025.2/settings64.sh
+
+   On Windows, run the build from Git Bash/MSYS2 or another shell where `J:\FPGA\2025.2\Vivado\bin` and `J:\FPGA\2025.2\Vitis\bin` are already on `PATH`.
 
 3. Run 'make' to build the FPGA and software necessary to run the OPL3
 and create an SD card image.

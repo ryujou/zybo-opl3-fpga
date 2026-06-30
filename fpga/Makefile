@@ -87,7 +87,7 @@ SIM_SRC = \
 	modules/operator/sim/save_dac_input.sv
 
 BD_SRC = \
-	bd/vivado_2023.2_bd.tcl
+	bd/vivado_2025.2_bd.tcl
 
 PRE_SYN_XDC_SRC = \
 	constraints/ZYBO_Master.xdc
@@ -95,8 +95,8 @@ PRE_SYN_XDC_SRC = \
 POST_SYN_XDC_SRC = \
 	constraints/post_synth.xdc
 
-IP_SRC = \
-	modules/misc/ip/ila_0/ila_0.xci
+# Optional out-of-tree debug IPs can be added here if present locally.
+IP_SRC =
 
 INC_DIR0 = \
 	modules/

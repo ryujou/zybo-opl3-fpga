@@ -8,6 +8,10 @@ set IP_SRC [lindex $argv 5]
 set outputDir build
 
 create_project -part xc7z010clg400-1 -in_memory
+set localBoardRepo [file normalize "J:/FPGA/board_files/vivado-boards/new/board_files"]
+if { [file isdirectory $localBoardRepo] } {
+    set_param board.repoPaths [list $localBoardRepo]
+}
 set_property target_language Verilog [current_project]
 set_property default_lib work [current_project]
 
@@ -24,7 +28,16 @@ make_wrapper -files [get_files $outputDir/design_1/design_1.bd] -top -import -fo
 
 read_verilog -sv ${PKG_SRC}
 read_verilog -sv ${RTL_SRC}
-read_ip ${IP_SRC}
+foreach ip_file $IP_SRC {
+    if { $ip_file eq "" } {
+        continue
+    }
+    if { ![file exists $ip_file] } {
+        puts "INFO: skipping missing optional IP $ip_file"
+        continue
+    }
+    read_ip $ip_file
+}
 read_xdc ${PRE_SYN_XDC_SRC}
 
 synth_design -name opl3 -part xc7z010clg400-1 -top design_1_wrapper -include_dirs \

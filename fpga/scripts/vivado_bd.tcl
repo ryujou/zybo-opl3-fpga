@@ -4,6 +4,10 @@ set BOARD [lindex $argv 1]
 set outputDir build
 
 create_project -part xc7z010clg400-1 -in_memory
+set localBoardRepo [file normalize "J:/FPGA/board_files/vivado-boards/new/board_files"]
+if { [file isdirectory $localBoardRepo] } {
+    set_param board.repoPaths [list $localBoardRepo]
+}
 set_property IP_REPO_PATHS {"modules/opl3_fpga_2_0"} [current_project]
 update_ip_catalog -rebuild
 
