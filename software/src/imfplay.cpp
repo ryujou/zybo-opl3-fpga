@@ -31,6 +31,7 @@ subject to the following restrictions:
 #include "xuartps_hw.h"
 #include "xparameters.h"
 #include "timer_ps.h"
+#include "opl_hw.h"
 
 #include "global.h"
 
@@ -71,43 +72,20 @@ typedef struct
 	filetype type;
 } fileinfo;
 
-void opl2_out(unsigned char reg, unsigned char data_in, unsigned char bank)
+static void opl2_out(unsigned char reg, unsigned char data_in, unsigned char bank)
 {
-	int address;
-	u32 data;
-
-	// write OPL3 address
-	address = bank ? 0x2 : 0x0;
-	data = reg;
-	Xil_Out8(XPAR_OPL3_FPGA_0_BASEADDR + address, data);
-	for (int i = 0; i < 20; ++i)
-		Xil_In8(XPAR_OPL3_FPGA_0_BASEADDR);
-
-	// write OPL3 data
-	address = 0x1;
-	data = data_in;
-	Xil_Out8(XPAR_OPL3_FPGA_0_BASEADDR + address, data);
-	for (int i = 0; i < 100; ++i)
-		Xil_In8(XPAR_OPL3_FPGA_0_BASEADDR);
-
-	shadow_opl[reg] = data;
+	opl_write_reg(reg, data_in, bank);
+	shadow_opl[reg] = data_in;
 	// printf("opl3_write('h%0x, 'h%0x, 'b%0x);\n", reg, data_in, bank);
 	// fflush(stdout);
 }
 
-void opl2_clear(void)
+static void opl2_clear(void)
 {
-	int i;
-	for (i = 0; i < 256; i++) {
-		opl2_out(i, 0, 0);
-		opl2_out(i, 0, 1);
-	}
-
-	// unmute output
-	opl2_out(2, 1, 1);
+	opl_reset_core();
 }
 
-void mute_toggle(int channel)
+static void mute_toggle(int channel)
 {
 	mutemask[channel] = !mutemask[channel];
 
@@ -116,7 +94,7 @@ void mute_toggle(int channel)
 
 }
 
-int is_muted(int reg)
+static int is_muted(int reg)
 {
 	if ((reg >= 0xA0 && reg <= 0xA8)
 		|| (reg >= 0xB0 && reg <= 0xB8)
@@ -143,7 +121,7 @@ int is_muted(int reg)
 	return 0;
 }
 
-int read_next_cmd(fileinfo *fi, cmd *c)
+static int read_next_cmd(fileinfo *fi, cmd *c)
 {
 	char rb[4];
 	int ri;
@@ -242,7 +220,7 @@ int read_next_cmd(fileinfo *fi, cmd *c)
 	return 0;
 }
 
-int file_open(fileinfo *fi, char *fname)
+static int file_open(fileinfo *fi, char *fname)
 {
 	char rb[16];
 	char drosig[] = "DBRAWOPL";
@@ -320,7 +298,7 @@ int file_open(fileinfo *fi, char *fname)
 	}
 }
 
-void file_close(fileinfo *fi)
+static void file_close(fileinfo *fi)
 {
 	mfs_file_close(fi->stream);
 }

@@ -1,168 +1,106 @@
 # Zybo OPL3 FPGA
 
-这是一个面向 Digilent Zybo 开发板的 OPL3 FPGA 独立项目，目标是在 Zynq-7000 平台上复现 Yamaha YMF262（OPL3）FM 合成器，并提供一个可直接上板运行的裸机播放器系统。
+这是一个面向 Digilent Zybo 的 OPL3 FPGA 项目，当前仓库已经整理到 `Vivado/Vitis 2025.2`，并新增了两条可用的软件路径：
 
-当前仓库已经整理为 `Vivado/Vitis 2025.2` 版本，构建流程、上板启动和音频播放都已完成实机验证，适合作为 Zybo 上的 OPL3 复现与学习工程长期维护。
+- 板端裸机 CLI，本地播放 `.dro/.imf`
+- PC 中文上位机，通过串口实时发送 MIDI 转换后的 OPL3 事件
 
-## 项目定位
+当前默认开发方式是 `JTAG 直下 bitstream + ELF`，不依赖 `BOOT.bin`。
 
-- 面向 `Digilent Zybo`
-- 面向 `Vivado/Vitis 2025.2`
-- 软件侧采用 `bare-metal standalone`
-- 保留串口命令行播放器和 `.dro` 文件播放能力
+## 当前能力
 
-## 当前状态
+- 硬件仍是 `PS -> AXI4-Lite -> opl3_fpga_v2_0 -> opl3`
+- 音频仍走 Zybo 板载 `SSM2603 + I2S`
+- 板端仍是 `standalone bare-metal`
+- 不依赖 `Linux` 或 `PetaLinux`
+- 保留原来的串口命令：
+  - `help`
+  - `ls`
+  - `play FILENAME`
+- 新增串流命令：
+  - `stream`
 
-- 已验证完整构建链：
-  - `BD -> bitstream -> xsa -> Vitis app -> BOOT.bin`
-- 已完成实机验证：
-  - SD 启动成功
-  - 串口 CLI 正常
-  - `help / ls / play` 命令正常
-  - `play doom_000.dro` 可实际出声
-
-## 工程结构
+## 目录
 
 - `fpga/`
-  - FPGA 顶层设计、约束、Vivado Tcl、Block Design 脚本
-- `software/`
-  - 裸机播放器程序
-  - `.dro` 音乐文件
-  - `BOOT.bin` 打包所需的 `bif`
-- `Makefile`
-  - 顶层一键构建入口
+  - Vivado BD、约束、Tcl、bitstream 构建
+- `software/src/`
+  - 板端裸机播放器与实时串流固件
+- `pc_player/`
+  - PC 侧中文 MIDI 上位机
+- `software/jtag/`
+  - XSCT/JTAG 下载脚本
 
-## 系统接口
+## 构建
 
-- 上位机通信：
-  - `PROG/UART` 串口
-  - `115200 8-N-1`
-- PS 与 PL 通信：
-  - `AXI4-Lite`
-- 音频输出：
-  - Zybo 板载 `SSM2603`
-  - `I2S`
-
-这个仓库当前走的是 `bare-metal` 路线，不依赖 `Linux` 或 `PetaLinux`。
-
-## 主要产物
-
-成功构建后会生成：
-
-- `fpga/build/opl3.bit`
-- `fpga/build/opl3.xsa`
-- `vitis_project/opl3_platform/export/opl3_platform/sw/boot/fsbl.elf`
-- `vitis_project/imfplay_port/build/imfplay_port.elf`
-- `software/opl3dro/filesystem.mfs`
-- `BOOT.bin`
-
-## 依赖环境
-
-### 1. AMD/Xilinx 工具链
-
-- `Vivado 2025.2`
-- `Vitis 2025.2`
-- `bootgen`
-- `mfsgen`
-
-Windows 下建议保证以下目录已加入 `PATH`：
-
-```text
-<Vivado 2025.2 安装目录>\Vivado\bin
-<Vitis 2025.2 安装目录>\Vitis\bin
-<Vitis 2025.2 安装目录>\Vitis\gnuwin\bin
-```
-
-### 2. Digilent Zybo board files
-
-虽然这个仓库可以直接基于器件型号 `xc7z010clg400-1` 构建，不依赖 `.xpr` 工程文件，但为了在 Vivado 中做板级识别和人工检查，仍建议安装官方 board files。
-
-官方仓库：
-
-- <https://github.com/Digilent/vivado-boards>
-
-如果 `Vivado 2025.2` 没有自动识别 Zybo，可在 Tcl 中设置：
-
-```tcl
-set_param board.repoPaths {/path/to/vivado-boards/new/board_files}
-```
-
-官方 Zybo 参考资料：
-
-- <https://digilent.com/reference/programmable-logic/zybo/reference-manual>
-
-历史参考资料目录仅作为旧工程比对使用，不属于正式依赖。
-
-## 构建方法
-
-### 1. 可选：添加 `.dro` 音乐文件
-
-把新的 `.dro` 文件放进：
-
-```text
-software/opl3dro
-```
-
-它们会在构建时被打进 `filesystem.mfs`。
-
-### 2. 一键构建
-
-在仓库根目录执行：
-
-```bash
-make
-```
-
-该命令会完成：
-
-1. FPGA bitstream 构建
-2. XSA 导出
-3. Vitis 平台和裸机应用构建
-4. `.dro` 文件系统镜像生成
-5. `BOOT.bin` 打包
-
-### 3. 只构建硬件
+### 硬件
 
 ```bash
 cd fpga
 make bitstream
 ```
 
-### 4. 清理
+产物：
+
+- `fpga/build/opl3.bit`
+- `fpga/build/opl3.xsa`
+
+### 板端软件
 
 ```bash
-make clean
+vitis -s software/vitis_builder.py
 ```
 
-## 上板运行
+典型产物：
 
-### 1. 准备 SD 卡
+- `vitis_project/imfplay_port/build/imfplay_port.elf`
 
-- 将 SD 卡格式化为 `FAT32`
-- 把生成的 `BOOT.bin` 复制到 SD 卡根目录
+### PC 上位机
 
-### 2. 设置启动方式
+建议使用 Python 3.11+。
 
-- 将 Zybo 启动模式拨到 `SD`
+```bash
+pip install -r pc_player/requirements.txt
+python pc_player/main.py
+```
 
-### 3. 连接串口
+依赖：
 
-- 用 USB 线连接板子的 `PROG/UART`
-- 电脑会枚举出一个串口设备
+- `PySide6`
+- `mido`
+- `pyserial`
 
-串口参数：
+## JTAG 下载运行
+
+### 方式 1：Vivado/Vitis 图形界面
+
+1. 在 Hardware Manager 下载 `fpga/build/opl3.bit`
+2. 在 Vitis/XSDB 下载并运行 `imfplay_port.elf`
+
+### 方式 2：XSCT 脚本
+
+确保 `xsct` 在 `PATH` 中，然后执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File software/jtag/run_jtag.ps1
+```
+
+也可以手工指定文件：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File software/jtag/run_jtag.ps1 `
+  -Bitstream fpga/build/opl3.bit `
+  -Elf vitis_project/imfplay_port/build/imfplay_port.elf
+```
+
+## 板端命令行
+
+串口命令模式仍使用：
 
 - 波特率：`115200`
-- 数据位：`8`
-- 校验位：`None`
-- 停止位：`1`
-- 流控：`None`
+- 格式：`8-N-1`
 
-### 4. 启动
-
-- 上电或按 `PS-SRST`
-
-正常情况下串口会显示：
+启动后典型输出：
 
 ```text
 Welcome to the OPL3 FPGA
@@ -171,43 +109,45 @@ Type 'help' for a list of commands
 >
 ```
 
-## 串口命令
-
-目前已验证的命令包括：
+可用命令：
 
 - `help`
 - `ls`
-- `play FILENAME`
+- `play doom_000.dro`
+- `stream`
 
-示例：
+`stream` 命令会把板子切到实时串流模式，随后串口波特率切换为 `921600`。
 
-```text
-> ls
-doom_000.dro 73778
-doom_001.dro 54434
-...
+## PC 中文上位机
 
-> play doom_000.dro
-DRO 2.0 file
-```
+第一版流程：
 
-## 已验证结果
+1. 用 JTAG 下载 `bitstream` 和 `elf`
+2. 打开 `pc_player/main.py`
+3. 选择 Zybo 对应串口
+4. 点击“连接测试”
+5. 选择本地 `.mid/.midi`
+6. 点击“播放”
 
-本仓库当前版本已经在 Zybo 板上完成以下验证：
+上位机会先用 `115200` 发送 `stream` 命令，再自动切到 `921600` 二进制协议。
 
-- `BOOT.bin` 从 SD 正常启动
-- 串口 `COM` 口可交互
-- `help` 命令正常响应
-- `ls` 能列出 `filesystem.mfs` 中的 `.dro` 文件
-- `play doom_000.dro` 可实际播放音频
+当前已实现：
+
+- 中文界面
+- 本地 MIDI 文件加载
+- GM 到固定 OPL3 音色映射
+- 播放 / 暂停 / 停止 / 重新开始
+- 板端实时 OPL 事件串流
+
+当前限制：
+
+- 第一版只支持本地 MIDI 文件播放
+- 不支持 USB Audio
+- 不支持 DAW / VST / 实时 MIDI 键盘
+- 暂停恢复会重建当前发声状态，但不会精确恢复原始包络相位
 
 ## 说明
 
-- 当前软件侧为 `standalone bare-metal`
-- 不依赖 `PetaLinux`
-- 不保留 `Vivado/Vitis 2023.2` 双版本兼容
-- 默认调试流中不再依赖缺失的 `ila_0.xci`
-
-## 许可证
-
-本仓库沿用原项目许可证。具体请查看仓库中的许可证文件。
+- `BOOT.bin`、SD 卡镜像和 QSPI 烧录不是当前开发主路径
+- 如果你只做联调，优先使用 JTAG 直下
+- 若串口桥在 `921600` 下不稳定，可先降到 `460800` 做联调，再回到默认值排查
