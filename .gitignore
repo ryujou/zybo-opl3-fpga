@@ -1,4 +1,5 @@
 build/
+dist/
 .Xil/
 fpga/modules/operator/work/
 fpga/sim_lib/
