@@ -413,17 +413,17 @@ PC 侧播放流程：
 ```mermaid
 sequenceDiagram
     participant PC as PC
-    participant LINK as USB/UART
+    participant Transport as USB/UART
     participant BUF as Song Buffer
     participant SCH as Scheduler
     participant OPL as AXI to OPL3
 
-    PC->>LINK: HELLO / ENTER_STREAM
-    PC->>LINK: UPLOAD_BEGIN
-    PC->>LINK: UPLOAD_CHUNK
-    PC->>LINK: UPLOAD_END
-    PC->>LINK: PLAY_BUFFERED
-    LINK->>BUF: 写入整首歌曲事件
+    PC->>Transport: HELLO / ENTER_STREAM
+    PC->>Transport: UPLOAD_BEGIN
+    PC->>Transport: UPLOAD_CHUNK
+    PC->>Transport: UPLOAD_END
+    PC->>Transport: PLAY_BUFFERED
+    Transport->>BUF: 写入整首歌曲事件
     BUF->>SCH: 逐事件读取 delay_us + writes
     SCH->>OPL: 按定时写入寄存器
 ```
