@@ -22,6 +22,7 @@ fpga/NA/ps7_summary.html
 .lock
 .vscode/
 .midi/
+midi/
 .project
 fpga/vsim.wlf
 fpga/modules/operator/vsim.wlf
