@@ -36,6 +36,12 @@ def load_vgm_file(path: str) -> LoadedVgm:
     ym3812_clock = _u32(data, 0x50)
     ymf262_clock = _u32(data, 0x5C)
 
+    # Some VGM writers place GD3 metadata after the command stream and expose
+    # its offset in the standard header field at 0x14. Stop parsing before the
+    # tag instead of treating UTF-16 metadata bytes as opcodes.
+    gd3_offset = _u32(data, 0x14)
+    command_end = gd3_offset + 0x14 if gd3_offset else len(data)
+
     # If the file only declares YM3812, force C0-C8 panning bits so an OPL3 core
     # sends OPL2-era channels to both left and right.
     opl2_compat_mode = ym3812_clock != 0 and ymf262_clock == 0
@@ -48,7 +54,7 @@ def load_vgm_file(path: str) -> LoadedVgm:
     total_us = 0
     pos = data_start
 
-    while pos < len(data):
+    while pos < min(len(data), command_end):
         cmd_offset = pos
         cmd = data[pos]
         pos += 1
@@ -180,11 +186,6 @@ def load_vgm_file(path: str) -> LoadedVgm:
             pos = _skip(data, pos, 1, cmd_offset, cmd)
             continue
         if cmd == 0x95:
-            pos = _skip(data, pos, 4, cmd_offset, cmd)
-            continue
-
-        # Seek to PCM data bank. Irrelevant for OPL-only playback.
-        if cmd == 0xE0:
             pos = _skip(data, pos, 4, cmd_offset, cmd)
             continue
 

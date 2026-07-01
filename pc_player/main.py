@@ -52,6 +52,10 @@ class PlayerThread(QThread):
             if not built_song.data:
                 raise ProtocolError("没有生成任何可播放的 OPL 事件")
 
+            self.status_changed.emit(f"正在构建 OPL 事件：{built_song.backend_name}")
+            if built_song.diagnostic:
+                print(built_song.diagnostic)
+
             self.progress_changed.emit(5)
             hello = transport.open()
             self.connected.emit(

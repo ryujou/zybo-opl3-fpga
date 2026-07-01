@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
+import config
+from midi_backend.base import MidiBackendError, MidiBuildResult
+from midi_backend.midi2vgm_backend import build_with_midi2vgm
+from midi_backend.python_fallback import build_with_python_fallback
 from midi_loader import LoadedMidi
-from opl_allocator import OplMidiSynth
 from protocol import OplWrite
 from vgm_loader import LoadedVgm, OplStreamEvent
 
@@ -21,6 +24,8 @@ class BuiltSong:
     event_count: int
     write_count: int
     total_delay_us: int
+    backend_name: str = "vgm loader"
+    diagnostic: str = ""
 
 
 def build_preloaded_song(song: LoadedMidi | LoadedVgm) -> BuiltSong:
@@ -32,34 +37,33 @@ def build_preloaded_song(song: LoadedMidi | LoadedVgm) -> BuiltSong:
 
 
 def _build_from_midi(midi_data: LoadedMidi) -> BuiltSong:
-    synth = OplMidiSynth()
-    payload = bytearray()
-    pending_delay_us = 0
-    event_count = 0
-    write_count = 0
-    total_delay_us = 0
+    backend = getattr(config, "MIDI_BACKEND", "auto")
+    if backend == "python":
+        return _result_to_built_song(build_with_python_fallback(midi_data))
 
-    for event in midi_data.events:
-        pending_delay_us += event.delta_us
-        writes = synth.handle_message(event.message)
-        if not writes:
-            continue
+    if backend == "midi2vgm":
+        return _result_to_built_song(build_with_midi2vgm(midi_data.source_path))
 
-        event_count += _append_event(payload, pending_delay_us, writes)
-        total_delay_us += pending_delay_us
-        pending_delay_us = 0
-        write_count += len(writes)
+    if backend != "auto":
+        raise MidiBackendError(f"config.MIDI_BACKEND 配置无效: {backend!r}")
 
-    final_writes = synth.all_notes_off_writes()
-    if final_writes:
-        event_count += _append_event(payload, 0, final_writes)
-        write_count += len(final_writes)
+    try:
+        result = build_with_midi2vgm(midi_data.source_path)
+        return _result_to_built_song(result)
+    except MidiBackendError as exc:
+        fallback = build_with_python_fallback(midi_data)
+        fallback.diagnostic = f"midi2vgm backend failed, fallback to python mapper: {exc}"
+        return _result_to_built_song(fallback)
 
+
+def _result_to_built_song(result: MidiBuildResult) -> BuiltSong:
     return BuiltSong(
-        data=bytes(payload),
-        event_count=event_count,
-        write_count=write_count,
-        total_delay_us=total_delay_us,
+        data=result.data,
+        event_count=result.event_count,
+        write_count=result.write_count,
+        total_delay_us=result.total_delay_us,
+        backend_name=result.backend_name,
+        diagnostic=result.diagnostic,
     )
 
 
@@ -80,7 +84,6 @@ def _build_from_opl_events(events: Iterable[OplStreamEvent], total_delay_us: int
         write_count=write_count,
         total_delay_us=total_delay_us,
     )
-
 
 def _append_event(payload: bytearray, delay_us: int, writes: Iterable[OplWrite]) -> int:
     """Append one logical event, splitting large simultaneous write bursts.

@@ -18,6 +18,7 @@ class LoadedMidi:
     events: List[TimedMidiEvent]
     total_us: int
     title: str
+    source_path: str
 
 
 def load_midi_file(path: str) -> LoadedMidi:
@@ -39,4 +40,9 @@ def load_midi_file(path: str) -> LoadedMidi:
             continue
         events.append(TimedMidiEvent(delta_us=delta_us, message=message))
 
-    return LoadedMidi(events=events, total_us=total_us, title=midi_path.name)
+    return LoadedMidi(
+        events=events,
+        total_us=total_us,
+        title=midi_path.name,
+        source_path=str(midi_path),
+    )

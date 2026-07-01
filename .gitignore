@@ -31,3 +31,6 @@ fpga/modules/misc/vsim.wlf
 .sv_cache/
 __pycache__/
 *.pyc
+*.stackdump
+tools/midi2vgm/build/
+tools/*.7z
