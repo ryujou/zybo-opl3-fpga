@@ -25,6 +25,8 @@ TYPE_UPLOAD_BEGIN = 0x08
 TYPE_UPLOAD_CHUNK = 0x09
 TYPE_UPLOAD_END = 0x0A
 TYPE_PLAY_BUFFERED = 0x0B
+TYPE_PAUSE_BUFFERED = 0x0C
+TYPE_RESUME_BUFFERED = 0x0D
 TYPE_ERROR = 0x7F
 RESPONSE_MASK = 0x80
 
@@ -299,6 +301,14 @@ class ZyboTransport:
 
     def play_buffered(self) -> None:
         self._request(TYPE_PLAY_BUFFERED)
+        self._drain_async_frames()
+
+    def pause_buffered(self) -> None:
+        self._request(TYPE_PAUSE_BUFFERED)
+        self._drain_async_frames()
+
+    def resume_buffered(self) -> None:
+        self._request(TYPE_RESUME_BUFFERED)
         self._drain_async_frames()
 
     def _find_device(self) -> Optional[usb.core.Device]:

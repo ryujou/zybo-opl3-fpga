@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
 from PySide6.QtCore import QThread, Signal
@@ -42,6 +44,31 @@ class PlayerThread(QThread):
         super().__init__()
         self.device_key = device_key
         self.song = song
+        self._lock = Lock()
+        self._stop_requested = False
+        self._restart_requested = False
+        self._pause_requested = False
+
+    def request_pause(self, paused: bool) -> None:
+        with self._lock:
+            self._pause_requested = paused
+
+    def request_stop(self) -> None:
+        with self._lock:
+            self._stop_requested = True
+
+    def request_restart(self) -> None:
+        with self._lock:
+            self._restart_requested = True
+
+    def _consume_controls(self) -> tuple[bool, bool, bool]:
+        with self._lock:
+            stop_requested = self._stop_requested
+            restart_requested = self._restart_requested
+            pause_requested = self._pause_requested
+            self._stop_requested = False
+            self._restart_requested = False
+        return stop_requested, restart_requested, pause_requested
 
     def run(self) -> None:
         transport = ZyboTransport(self.device_key)
@@ -72,16 +99,71 @@ class PlayerThread(QThread):
             self.progress_changed.emit(20)
 
             self.status_changed.emit("板端本地播放中")
-            transport.timeout = max(10.0, (built_song.total_delay_us / 1_000_000.0) + 10.0)
             transport.play_buffered()
-
-            self.progress_changed.emit(100)
-            self.status_changed.emit("播放完成")
-            self.playback_finished.emit()
+            self._monitor_playback(transport, built_song.total_delay_us)
         except (ProtocolError, OSError, ValueError) as exc:
             self.error_occurred.emit(str(exc))
         finally:
             transport.close()
+            self.playback_finished.emit()
+
+    def _monitor_playback(self, transport: ZyboTransport, total_delay_us: int) -> None:
+        total_seconds = max(total_delay_us / 1_000_000.0, 0.0)
+        started_at = time.monotonic()
+        paused_at: float | None = None
+        paused_accumulated = 0.0
+        is_paused = False
+        last_progress = 20
+
+        while True:
+            stop_requested, restart_requested, pause_requested = self._consume_controls()
+
+            if stop_requested:
+                transport.stop()
+                self.progress_changed.emit(0)
+                self.status_changed.emit("播放已停止")
+                return
+
+            if restart_requested:
+                transport.stop()
+                transport.play_buffered()
+                started_at = time.monotonic()
+                paused_at = None
+                paused_accumulated = 0.0
+                is_paused = False
+                last_progress = 20
+                self.progress_changed.emit(20)
+                self.status_changed.emit("已重新开始播放")
+                continue
+
+            if pause_requested != is_paused:
+                if pause_requested:
+                    transport.pause_buffered()
+                    paused_at = time.monotonic()
+                    is_paused = True
+                    self.status_changed.emit("已暂停")
+                else:
+                    transport.resume_buffered()
+                    if paused_at is not None:
+                        paused_accumulated += time.monotonic() - paused_at
+                    paused_at = None
+                    is_paused = False
+                    self.status_changed.emit("板端本地播放中")
+
+            status = transport.query_status()
+            if not status.playing:
+                self.progress_changed.emit(100)
+                self.status_changed.emit("播放完成")
+                return
+
+            if total_seconds > 0 and not is_paused:
+                elapsed = time.monotonic() - started_at - paused_accumulated
+                progress = min(99, max(20, int(20 + (elapsed / total_seconds) * 80)))
+                if progress != last_progress:
+                    self.progress_changed.emit(progress)
+                    last_progress = progress
+
+            time.sleep(0.1)
 
 
 class MainWindow(QMainWindow):
@@ -92,6 +174,7 @@ class MainWindow(QMainWindow):
 
         self.song: Optional[LoadedSong] = None
         self.player_thread: Optional[PlayerThread] = None
+        self.is_paused = False
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -222,16 +305,30 @@ class MainWindow(QMainWindow):
         self.player_thread.playback_finished.connect(self.on_finished)
         self.player_thread.connected.connect(self.on_connected)
         self.player_thread.start()
+        self.is_paused = False
+        self.pause_button.setText("暂停")
         self.status_label.setText("当前状态：准备播放")
         self._set_buttons(is_playing=True)
 
     def pause_playback(self) -> None:
-        QMessageBox.information(self, "暂停未实现", "当前为板端阻塞式本地播放模式，暂不支持暂停。")
+        if self.player_thread is None or not self.player_thread.isRunning():
+            return
+        self.is_paused = not self.is_paused
+        self.player_thread.request_pause(self.is_paused)
+        self.pause_button.setText("继续" if self.is_paused else "暂停")
 
     def stop_playback(self) -> None:
-        QMessageBox.information(self, "停止未实现", "当前为板端阻塞式本地播放模式，播放开始后暂不支持中途停止。")
+        if self.player_thread is None or not self.player_thread.isRunning():
+            return
+        self.player_thread.request_stop()
 
     def restart_playback(self) -> None:
+        if self.player_thread is not None and self.player_thread.isRunning():
+            self.is_paused = False
+            self.pause_button.setText("暂停")
+            self.progress.setValue(0)
+            self.player_thread.request_restart()
+            return
         self.progress.setValue(0)
         self.start_playback()
 
@@ -243,20 +340,24 @@ class MainWindow(QMainWindow):
 
     def on_error(self, text: str) -> None:
         self.player_thread = None
+        self.is_paused = False
+        self.pause_button.setText("暂停")
         self.status_label.setText("当前状态：错误")
         self._set_buttons(is_playing=False)
         QMessageBox.critical(self, "播放失败", text)
 
     def on_finished(self) -> None:
         self.player_thread = None
+        self.is_paused = False
+        self.pause_button.setText("暂停")
         self._set_buttons(is_playing=False)
 
     def _set_buttons(self, *, is_playing: bool) -> None:
         has_song = self.song is not None
         self.play_button.setEnabled(has_song and not is_playing)
-        self.pause_button.setEnabled(False)
-        self.stop_button.setEnabled(False)
-        self.restart_button.setEnabled(has_song and not is_playing)
+        self.pause_button.setEnabled(is_playing)
+        self.stop_button.setEnabled(is_playing)
+        self.restart_button.setEnabled(has_song)
 
 
 def load_song(path: str) -> LoadedSong:

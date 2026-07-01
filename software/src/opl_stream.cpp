@@ -25,6 +25,8 @@ constexpr u8 kTypeUploadBegin = 0x08;
 constexpr u8 kTypeUploadChunk = 0x09;
 constexpr u8 kTypeUploadEnd = 0x0A;
 constexpr u8 kTypePlayBuffered = 0x0B;
+constexpr u8 kTypePauseBuffered = 0x0C;
+constexpr u8 kTypeResumeBuffered = 0x0D;
 constexpr u8 kTypeError = 0x7F;
 constexpr u8 kResponseMask = 0x80;
 constexpr u8 kVersionMajor = 2;
@@ -34,7 +36,6 @@ constexpr size_t kSongBufferSize = 8 * 1024 * 1024;
 constexpr u64 kGlobalTimerCorrection = 4;
 constexpr u64 kGlobalTimerCountsPerSecond = XPAR_CPU_CORE_CLOCK_FREQ_HZ / 2;
 constexpr u64 kGlobalTimerCountsPerMicrosecond = kGlobalTimerCountsPerSecond / 1000000ULL;
-constexpr u32 kBufferedSleepMarginUs = 200;
 using XTime = u64;
 extern "C" void XTime_GetTime(XTime *time_value);
 
@@ -84,6 +85,11 @@ struct BufferedSongState {
 	bool upload_active = false;
 	bool loaded_ready = false;
 	bool playback_active = false;
+	bool playback_paused = false;
+	bool event_armed = false;
+	u64 next_event_ticks = 0;
+	u64 remaining_event_ticks = 0;
+	BufferedEvent current_event = {};
 };
 
 QueueState g_queue;
@@ -93,6 +99,7 @@ BufferedSongState g_song;
 u16 g_frame_payload_max = 1024;
 u16 g_upload_chunk_bytes = 1024;
 u32 g_transport_flags = 0;
+u8 g_opl_shadow[2][256];
 
 } // namespace
 
@@ -123,22 +130,6 @@ u64 now_ticks()
 u64 microseconds_to_ticks(u32 delay_us)
 {
 	return static_cast<u64>(delay_us) * kGlobalTimerCountsPerMicrosecond;
-}
-
-void buffered_wait_until_tick(u64 deadline_ticks)
-{
-	while (true) {
-		const u64 current_ticks = now_ticks();
-		if (current_ticks >= deadline_ticks) {
-			return;
-		}
-
-		const u64 remaining_ticks = deadline_ticks - current_ticks;
-		const u64 remaining_us = remaining_ticks / kGlobalTimerCountsPerMicrosecond;
-		if (remaining_us > kBufferedSleepMarginUs) {
-			TimerDelay(static_cast<u32>(remaining_us - kBufferedSleepMarginUs));
-		}
-	}
 }
 
 u8 calc_checksum(u8 type, u16 length, const u8 *payload)
@@ -261,12 +252,54 @@ void buffered_reset_metadata()
 	g_song.upload_active = false;
 	g_song.loaded_ready = false;
 	g_song.playback_active = false;
+	g_song.playback_paused = false;
+	g_song.event_armed = false;
+	g_song.next_event_ticks = 0;
+	g_song.remaining_event_ticks = 0;
+	g_song.current_event = {};
+}
+
+void reset_opl_shadow()
+{
+	std::memset(g_opl_shadow, 0, sizeof(g_opl_shadow));
+	g_opl_shadow[1][0x05] = 0x01;
+	g_opl_shadow[1][0x02] = 0x01;
+}
+
+void opl_write_tracked(u8 reg, u8 value, u8 bank)
+{
+	g_opl_shadow[bank & 0x01][reg] = value;
+	opl_write_reg(reg, value, bank);
+}
+
+void opl_reset_tracked()
+{
+	opl_reset_core();
+	reset_opl_shadow();
+}
+
+void opl_restore_shadow()
+{
+	opl_reset_core();
+	for (u32 bank = 0; bank < 2; ++bank) {
+		for (u32 reg = 0; reg < 256; ++reg) {
+			u8 value = g_opl_shadow[bank][reg];
+			if (value != 0) {
+				opl_write_reg(static_cast<u8>(reg), value, static_cast<u8>(bank));
+			}
+		}
+	}
 }
 
 void buffered_stop_playback()
 {
 	g_song.play_offset = 0;
 	g_song.playback_active = false;
+	g_song.playback_paused = false;
+	g_song.event_armed = false;
+	g_song.next_event_ticks = 0;
+	g_song.remaining_event_ticks = 0;
+	g_song.current_event = {};
 	g_debug_buffered_play_offset = 0;
 }
 
@@ -346,7 +379,7 @@ void service_stream_playback()
 			return;
 		}
 
-		opl_write_reg(item.reg, item.value, item.bank);
+		opl_write_tracked(item.reg, item.value, item.bank);
 
 		QueuedWrite next;
 		if (!queue_peek(&next)) {
@@ -361,7 +394,44 @@ void service_stream_playback()
 
 void service_buffered_playback()
 {
-	// Buffered playback is executed synchronously in play_buffered_song().
+	if (!g_song.playback_active || g_song.playback_paused) {
+		return;
+	}
+
+	if (g_song.play_offset >= g_song.loaded_size) {
+		buffered_stop_playback();
+		g_debug_buffered_stage = 2;
+		XTime end_ticks = 0;
+		XTime_GetTime(&end_ticks);
+		g_debug_buffered_end_ticks = end_ticks;
+		g_debug_buffered_stage = 3;
+		return;
+	}
+
+	if (!g_song.event_armed) {
+		if (!parse_buffered_event(g_song.play_offset, &g_song.current_event)) {
+			buffered_stop_playback();
+			g_debug_buffered_stage = 0xEE;
+			return;
+		}
+
+		g_song.next_event_ticks = now_ticks() + microseconds_to_ticks(g_song.current_event.delay_us);
+		g_song.event_armed = true;
+	}
+
+	if (now_ticks() < g_song.next_event_ticks) {
+		return;
+	}
+
+	for (u8 i = 0; i < g_song.current_event.count; ++i) {
+		const u8 *write = g_song.current_event.writes + (i * 3);
+		opl_write_tracked(write[1], write[2], write[0]);
+	}
+
+	g_song.play_offset += g_song.current_event.size_bytes;
+	g_song.event_armed = false;
+	g_debug_buffered_play_offset = g_song.play_offset;
+	++g_debug_buffered_events_done;
 }
 
 bool enqueue_opl_event(const u8 *payload, u16 length)
@@ -464,18 +534,16 @@ bool end_upload()
 	return true;
 }
 
-bool play_buffered_song_impl(bool send_response)
+bool start_buffered_playback()
 {
 	if (!g_song.loaded_ready || g_song.loaded_size == 0) {
-		if (send_response) {
-			send_error(11);
-		}
+		send_error(11);
 		return false;
 	}
 
 	queue_clear();
 	buffered_stop_playback();
-	opl_reset_core();
+	opl_reset_tracked();
 	g_song.play_offset = 0;
 	g_song.playback_active = true;
 	g_debug_buffered_stage = 1;
@@ -485,47 +553,49 @@ bool play_buffered_song_impl(bool send_response)
 	XTime_GetTime(&start_ticks);
 	g_debug_buffered_start_ticks = start_ticks;
 	g_debug_buffered_end_ticks = 0;
-	u64 next_event_ticks = start_ticks;
-
-	while (g_song.play_offset < g_song.loaded_size) {
-		BufferedEvent current_event;
-		if (!parse_buffered_event(g_song.play_offset, &current_event)) {
-			buffered_stop_playback();
-			g_debug_buffered_stage = 0xEE;
-			if (send_response) {
-				send_error(10);
-			}
-			return false;
-		}
-
-		next_event_ticks += microseconds_to_ticks(current_event.delay_us);
-		buffered_wait_until_tick(next_event_ticks);
-
-		for (u8 i = 0; i < current_event.count; ++i) {
-			const u8 *write = current_event.writes + (i * 3);
-			opl_write_reg(write[1], write[2], write[0]);
-		}
-
-		g_song.play_offset += current_event.size_bytes;
-		g_debug_buffered_play_offset = g_song.play_offset;
-		++g_debug_buffered_events_done;
-	}
-
-	buffered_stop_playback();
-	g_debug_buffered_stage = 2;
-	XTime end_ticks = 0;
-	XTime_GetTime(&end_ticks);
-	g_debug_buffered_end_ticks = end_ticks;
-	if (send_response) {
-		send_ok(kTypePlayBuffered);
-	}
-	g_debug_buffered_stage = 3;
+	g_song.playback_paused = false;
+	g_song.event_armed = false;
+	g_song.next_event_ticks = start_ticks;
+	g_song.remaining_event_ticks = 0;
+	g_song.current_event = {};
+	send_ok(kTypePlayBuffered);
 	return true;
 }
 
 bool play_buffered_song()
 {
-	return play_buffered_song_impl(true);
+	return start_buffered_playback();
+}
+
+bool pause_buffered_song()
+{
+	if (g_song.playback_active && !g_song.playback_paused) {
+		if (g_song.event_armed) {
+			const u64 current_ticks = now_ticks();
+			g_song.remaining_event_ticks =
+				(g_song.next_event_ticks > current_ticks) ? (g_song.next_event_ticks - current_ticks) : 0;
+		} else {
+			g_song.remaining_event_ticks = 0;
+		}
+		g_song.playback_paused = true;
+		opl_reset_core();
+	}
+	send_ok(kTypePauseBuffered);
+	return true;
+}
+
+bool resume_buffered_song()
+{
+	if (g_song.playback_active && g_song.playback_paused) {
+		opl_restore_shadow();
+		g_song.playback_paused = false;
+		if (g_song.event_armed) {
+			g_song.next_event_ticks = now_ticks() + g_song.remaining_event_ticks;
+		}
+		g_song.remaining_event_ticks = 0;
+	}
+	send_ok(kTypeResumeBuffered);
+	return true;
 }
 
 bool handle_frame(u8 type, const u8 *payload, u16 length, bool *keep_running)
@@ -536,7 +606,7 @@ bool handle_frame(u8 type, const u8 *payload, u16 length, bool *keep_running)
 		return true;
 	case kTypeEnterStream:
 		stop_all_playback();
-		opl_reset_core();
+		opl_reset_tracked();
 		send_ok(kTypeEnterStream);
 		send_status();
 		return true;
@@ -544,13 +614,13 @@ bool handle_frame(u8 type, const u8 *payload, u16 length, bool *keep_running)
 		return enqueue_opl_event(payload, length);
 	case kTypeStop:
 		stop_all_playback();
-		opl_reset_core();
+		opl_reset_tracked();
 		send_ok(kTypeStop);
 		send_status();
 		return true;
 	case kTypeResetOpl:
 		stop_all_playback();
-		opl_reset_core();
+		opl_reset_tracked();
 		send_ok(kTypeResetOpl);
 		return true;
 	case kTypeStatus:
@@ -558,7 +628,7 @@ bool handle_frame(u8 type, const u8 *payload, u16 length, bool *keep_running)
 		return true;
 	case kTypeExitStream:
 		stop_all_playback();
-		opl_reset_core();
+		opl_reset_tracked();
 		send_ok(kTypeExitStream);
 		*keep_running = false;
 		return true;
@@ -570,6 +640,10 @@ bool handle_frame(u8 type, const u8 *payload, u16 length, bool *keep_running)
 		return end_upload();
 	case kTypePlayBuffered:
 		return play_buffered_song();
+	case kTypePauseBuffered:
+		return pause_buffered_song();
+	case kTypeResumeBuffered:
+		return resume_buffered_song();
 	default:
 		send_error(1);
 		return false;
@@ -646,7 +720,7 @@ int stream_session(void)
 
 	queue_clear();
 	buffered_reset_metadata();
-	opl_reset_core();
+	opl_reset_tracked();
 	if (caps.send_hello_on_open) {
 		send_hello();
 	}
@@ -658,7 +732,7 @@ int stream_session(void)
 
 		if (g_debug_jtag_play_request != 0U) {
 			g_debug_jtag_play_request = 0;
-			g_debug_jtag_play_result = play_buffered_song_impl(false) ? 1U : 2U;
+			g_debug_jtag_play_result = start_buffered_playback() ? 1U : 2U;
 			did_work = true;
 		}
 
