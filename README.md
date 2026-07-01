@@ -244,201 +244,118 @@ flowchart TD
 
 ## OPL3 核心细节
 
-### 单个 operator 的数据路径
+这一节只保留模块级视角，不再展开到触发器和查找表级原理图。README 内展示三层：
 
-单个 `operator` 的实现位于：
+1. `Zynq Block Design`
+2. `opl3_fpga_v2_0` AXI 包装层
+3. `opl3` 核心顶层
+
+如果要继续往下看 `operator`、`phase_generator`、`envelope_generator` 的门级/寄存器级图，建议直接在 Vivado 中打开 `Open Elaborated Design` 或 `Open Synthesized Design` 查看。
+
+### 1. Zynq Block Design
+
+这一级描述的是整个板级系统如何把 PS、AXI、音频 Codec 和 OPL3 IP 连起来：
+
+- `processing_system7_0` 负责 ARM、DDR、MIO、UART、FCLK 和 AXI 主设备
+- `axi_interconnect_0` 把 PS 的 GP0 总线接到自定义 OPL3 IP
+- `opl3_fpga_v2_0_0` 提供 AXI-Lite 寄存器接口，并输出 I2S 与静音控制
+- `rst_ps7_0_100M` 统一管理 AXI 外设复位
+
+<div align="center">
+  <img src="docs/readme-assets/design_1.png" alt="design_1 block design" width="96%">
+</div>
+
+关联文件：
+
+- [design_1.pdf](fpga/build/design_1/design_1.pdf)
+
+### 2. `opl3_fpga_v2_0` 包装层
+
+这一级是自定义 IP 的顶层连接图，重点是把 AXI4-Lite 写时序翻译成 OPL3 Host Bus，再把 OPL3 的并行采样送进 I2S 发射器：
+
+- `opl3_fpga_v2_0_S_AXI`
+  - 处理 `AW/W/B` 与 `AR/R` 通道
+  - 生成 `address`、`din`、`cs_n`、`wr_n`、`rd_n`
+- `opl3`
+  - 接收 OPL3 风格寄存器写入
+  - 输出 `sample_l/sample_r/sample_valid`
+- `i2s`
+  - 把左右声道 PCM 串行化到 `i2s_sclk/i2s_ws/i2s_sd`
+
+<div align="center">
+  <img src="docs/readme-assets/opl3_fpga_v2_0_rtl.png" alt="opl3_fpga_v2_0 rtl" width="96%">
+</div>
+
+关联文件：
+
+- [opl3_fpga_v2_0_rtl.pdf](fpga/build/opl3_fpga_v2_0_rtl.pdf)
+
+### 3. `opl3` 核心顶层
+
+这一级展示 FM 合成核心内部的主模块关系：
+
+- `host_if`
+  - 接收 Host Bus 寄存器访问
+  - 解析地址、数据、状态寄存器和定时器寄存器
+- `clk_div`
+  - 依据 OPL3 采样周期产生 `sample_clk_en`
+- `channels`
+  - 调度全部 operator
+  - 完成 2-op / 4-op / rhythm 模式组合
+  - 混合左右声道采样
+- `leds`
+  - 输出调试状态
+- `timers`
+  - 模拟 OPL3 定时器和 IRQ 行为
+
+<div align="center">
+  <img src="docs/readme-assets/opl3_core_rtl.png" alt="opl3 core rtl" width="96%">
+</div>
+
+关联文件：
+
+- [opl3_core_rtl.pdf](fpga/build/opl3_core_rtl.pdf)
+
+### 模块工作原理
+
+#### `host_if`
+
+`host_if` 模拟的是 YMF262 的主机寄存器接口。PS 侧通过 AXI-Lite 写某个寄存器地址，包装层把这次写操作翻译为 `cs_n/wr_n/address/din`，`host_if` 再把它整理成内部统一的 `opl3_reg_wr` 事务，广播给后面的 `channels`、`timers` 和状态逻辑。
+
+#### `channels`
+
+`channels` 是整个合成器的数据组织中心。它不直接“存一整首歌”，而是在每个采样周期内轮流驱动全部 operator，拿到各 operator 的输出后，根据 OPL2/OPL3 模式、2-op/4-op 连接方式、鼓组模式和左右声道路由规则，把结果加到 `sample_l`、`sample_r`。
+
+这也是为什么工程里既有 `channels.sv`，又有 `control_operators.sv`：
+
+- `control_operators` 负责“这一拍该算哪个 operator、给它什么寄存器参数、反馈和调制输入是什么”
+- `channels` 负责“operator 算完后怎样组合成 channel，再怎样落到左右声道”
+
+#### `operator`
+
+单个 `operator` 是 FM 合成的基本运算单元。逻辑上可以概括成：
+
+1. `calc_phase_inc` 根据 `fnum/block/mult` 算相位步进
+2. `phase_generator` 维护相位累加器，并叠加调制、反馈、节奏模式相位
+3. `envelope_generator` 生成 ADSR 包络
+4. `opl3_log_sine_lut` 与 `opl3_exp_lut` 把“相位 + 包络”变成最终幅值
+
+README 不再放这一层的大图，但源码入口在：
 
 - [operator.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/operator/src/operator.sv:1)
 - [phase_generator.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/operator/src/phase_generator.sv:1)
 - [envelope_generator.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/operator/src/envelope_generator.sv:1)
 
-从 RTL 划分上看，单个 operator 的主要路径可以概括为：
+#### 包络与波形
 
-```mermaid
-flowchart LR
-    REG[fnum / block / mult / ws / env regs] --> INC[calc_phase_inc]
-    INC --> PG[phase_generator]
-    MOD[feedback / modulation] --> PG
-    ENV[envelope_generator] --> PG
-    PG --> LOGSIN[opl3_log_sine_lut]
-    LOGSIN --> EXP[opl3_exp_lut]
-    EXP --> OUT[out_p6]
-```
+- 包络阶段仍是典型的 `ATTACK -> DECAY -> SUSTAIN -> RELEASE`
+- 振幅控制由基础包络、`TL`、`KSL`、`Tremolo` 共同叠加
+- 波形选择由 `ws` 控制，OPL2 使用前 4 种，OPL3 扩展到 8 种
+- 节奏模式下，部分 operator 会切换成 `bass drum / snare / tom / cymbal / hi-hat` 专用路径
 
-对应关系：
+这部分更适合结合源码和波形图理解，相关分析图仍保留在：
 
-- `calc_phase_inc`
-  - 由 `fnum`、`block`、`mult` 计算相位增量
-- `phase_generator`
-  - 维护 phase accumulator
-  - 加入 modulation / feedback / rhythm phase
-  - 生成波形查表地址
-- `envelope_generator`
-  - 生成随时间变化的包络值
-- `opl3_log_sine_lut`
-  - 计算对数正弦域幅值
-- `opl3_exp_lut`
-  - 从对数域恢复到线性幅值
-
-### phase accumulator 与调制
-
-`phase_generator.sv` 中，phase accumulator 以每个 sample 周期推进。调制量不回写到 accumulator，而是只加到最终相位上：
-
-- `phase_acc_p3 <= phase_acc_p2 + phase_inc_p2`
-- `final_phase_p3 = rhythm_phase_p3 + modulation_p[3]`
-
-这意味着：
-
-- 基本音高由 `phase_inc` 决定
-- FM 调制只影响当前输出相位
-- feedback 通过 `operator.sv` 中的 `feedback_mem` 和 `feedback_result_p1` 回送到 `phase_generator`
-
-反馈相关实现位于：
-
-- [operator.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/operator/src/operator.sv:84)
-
-### 包络发生器
-
-`envelope_generator.sv` 将包络状态分为四个阶段：
-
-- `ATTACK`
-- `DECAY`
-- `SUSTAIN`
-- `RELEASE`
-
-状态保存在 `state_mem` 中，幅度值保存在 `env_int_mem` 中。每个 operator 都有各自独立的包络状态。
-
-包络最终输出为：
-
-- `env_p3 <= env_int_p[2] + tl_shifted_p2 + ksl_add_p2 + (am ? am_val_p2 : 0)`
-
-这几项分别对应：
-
-- `env_int`：基础包络
-- `tl`：Total Level
-- `ksl_add`：Key Scale Level
-- `am_val`：Tremolo
-
-包络整体图：
-
-<div align="center">
-  <img src="fpga/modules/operator/analysis/env_full.png" alt="Envelope Full" width="92%">
-</div>
-
-Attack 段局部图：
-
-<div align="center">
-  <img src="fpga/modules/operator/analysis/env_attack_zoomed.png" alt="Envelope Attack Zoomed" width="92%">
-</div>
-
-### 波形选择
-
-当前工程中，波形选择由 `ws` 控制。`phase_generator.sv` 中的实现分为两层：
-
-1. 先根据 `ws` 计算 `theta_p3`
-2. 再根据 `ws` 与最终相位决定 `pre_gain_p4` 和极性
-
-相关逻辑位于：
-
-- [phase_generator.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/operator/src/phase_generator.sv:138)
-- [phase_generator.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/operator/src/phase_generator.sv:157)
-
-其中：
-
-- `ws[2]` 仅在 OPL3 模式下生效
-- OPL2 模式只使用前 4 种波形
-- `ws = 6` 在实现中直接输出常量 `0`
-- `ws = 7` 使用相位值直接构造非正弦波形
-
-下面这些图来自 `fpga/modules/operator/analysis/`，对应不同 `ws` 选择下导出的时域波形。
-
-#### `ws = 0`
-
-<div align="center">
-  <img src="fpga/modules/operator/analysis/ws_0.png" alt="ws_0" width="72%">
-</div>
-
-#### `ws = 1`
-
-<div align="center">
-  <img src="fpga/modules/operator/analysis/ws_1.png" alt="ws_1" width="72%">
-</div>
-
-#### `ws = 2`
-
-<div align="center">
-  <img src="fpga/modules/operator/analysis/ws_2.png" alt="ws_2" width="72%">
-</div>
-
-#### `ws = 3`
-
-<div align="center">
-  <img src="fpga/modules/operator/analysis/ws_3.png" alt="ws_3" width="72%">
-</div>
-
-#### `ws = 4`
-
-<div align="center">
-  <img src="fpga/modules/operator/analysis/ws_4.png" alt="ws_4" width="72%">
-</div>
-
-#### `ws = 5`
-
-<div align="center">
-  <img src="fpga/modules/operator/analysis/ws_5.png" alt="ws_5" width="72%">
-</div>
-
-#### `ws = 6`
-
-<div align="center">
-  <img src="fpga/modules/operator/analysis/ws_6.png" alt="ws_6" width="72%">
-</div>
-
-#### `ws = 7`
-
-<div align="center">
-  <img src="fpga/modules/operator/analysis/ws_7.png" alt="ws_7" width="72%">
-</div>
-
-### 从 operator 到 channel
-
-单个 operator 的输出并不会直接送到 DAC，而是先进入 `channels.sv`：
-
-- `operator_out_mem` 保存各 operator 输出
-- `control_operators` 负责 2-op / 4-op 连接方式
-- `channels` 负责将各 channel 输出累加到左右声道
-
-`channels.sv` 中同时处理：
-
-- 2-op channel
-- 4-op channel
-- OPL rhythm mode
-- 左右声道路由 `cha/chb/chc/chd`
-
-对应源码：
-
-- [channels.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/channels/src/channels.sv:1)
-- [control_operators.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/channels/src/control_operators.sv:1)
-
-### 从 channel 到 I2S
-
-`channels` 产生：
-
-- `sample_l`
-- `sample_r`
-- `sample_valid`
-
-之后由：
-
-- [i2s.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/i2s/src/i2s.sv:1)
-
-将左右声道样本串行化，通过：
-
-- `i2s_sclk`
-- `i2s_ws`
-- `i2s_sd`
-
-送到板载 `SSM2603`。
+- `fpga/modules/operator/analysis/`
 
 ## 软件架构
 
@@ -499,7 +416,7 @@ sequenceDiagram
     participant LINK as USB/UART
     participant BUF as Song Buffer
     participant SCH as Scheduler
-    participant OPL as AXI->OPL3
+    participant OPL as AXI to OPL3
 
     PC->>LINK: HELLO / ENTER_STREAM
     PC->>LINK: UPLOAD_BEGIN
