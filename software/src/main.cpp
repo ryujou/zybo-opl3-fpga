@@ -36,7 +36,7 @@ void parseCmd(char *cmd) {
 	if (strncmp(token, "help", 4) == 0) {
 		cout << "ls - list files" << endl;
 		cout << "play FILENAME - play a file" << endl;
-		cout << "stream - enter real-time MIDI stream mode" << endl;
+		cout << "stream - enter transport stream mode (USB preferred)" << endl;
 	}
 	else if (strncmp(token, "ls", 2) == 0) {
 		ensure_mfs_ready();

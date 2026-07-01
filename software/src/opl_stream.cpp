@@ -5,14 +5,13 @@
 
 #include "opl_hw.h"
 #include "timer_ps.h"
+#include "transport.h"
 #include "xil_printf.h"
 #include "xparameters.h"
-#include "xuartps.h"
+#include "xstatus.h"
 
 namespace {
 
-constexpr u32 kCliBaud = 115200;
-constexpr u32 kStreamBaud = 921600;
 constexpr u8 kSync0 = 0x4F;
 constexpr u8 kSync1 = 0x50;
 constexpr u8 kTypeHello = 0x01;
@@ -28,15 +27,14 @@ constexpr u8 kTypeUploadEnd = 0x0A;
 constexpr u8 kTypePlayBuffered = 0x0B;
 constexpr u8 kTypeError = 0x7F;
 constexpr u8 kResponseMask = 0x80;
-constexpr u8 kVersionMajor = 1;
-constexpr u8 kVersionMinor = 1;
-constexpr size_t kFramePayloadMax = 192;
+constexpr u8 kVersionMajor = 2;
+constexpr u8 kVersionMinor = 0;
 constexpr size_t kQueueCapacity = 2048;
 constexpr size_t kSongBufferSize = 8 * 1024 * 1024;
 constexpr u64 kGlobalTimerCorrection = 4;
 constexpr u64 kGlobalTimerCountsPerSecond = XPAR_CPU_CORE_CLOCK_FREQ_HZ / 2;
-constexpr u32 kBufferedTimerDelayNum = 4;
-constexpr u32 kBufferedTimerDelayDen = 5;
+constexpr u64 kGlobalTimerCountsPerMicrosecond = kGlobalTimerCountsPerSecond / 1000000ULL;
+constexpr u32 kBufferedSleepMarginUs = 200;
 using XTime = u64;
 extern "C" void XTime_GetTime(XTime *time_value);
 
@@ -75,7 +73,7 @@ struct FrameParser {
 	u8 type = 0;
 	u16 length = 0;
 	u16 payload_index = 0;
-	u8 payload[kFramePayloadMax];
+	u8 payload[1024];
 };
 
 struct BufferedSongState {
@@ -88,12 +86,25 @@ struct BufferedSongState {
 	bool playback_active = false;
 };
 
-XUartPs g_uart;
-bool g_uart_ready = false;
 QueueState g_queue;
 bool g_stream_playback_armed = false;
 u64 g_stream_next_deadline_us = 0;
 BufferedSongState g_song;
+u16 g_frame_payload_max = 1024;
+u16 g_upload_chunk_bytes = 1024;
+u32 g_transport_flags = 0;
+
+} // namespace
+
+extern "C" volatile u32 g_debug_buffered_stage = 0;
+extern "C" volatile u32 g_debug_buffered_play_offset = 0;
+extern "C" volatile u32 g_debug_buffered_events_done = 0;
+extern "C" volatile u64 g_debug_buffered_start_ticks = 0;
+extern "C" volatile u64 g_debug_buffered_end_ticks = 0;
+extern "C" volatile u32 g_debug_jtag_play_request = 0;
+extern "C" volatile u32 g_debug_jtag_play_result = 0;
+
+namespace {
 
 u64 now_us()
 {
@@ -102,39 +113,31 @@ u64 now_us()
 	return static_cast<u64>((ticks * 1000000ULL * kGlobalTimerCorrection) / kGlobalTimerCountsPerSecond);
 }
 
-bool uart_init(u32 baud_rate)
+u64 now_ticks()
 {
-	if (!g_uart_ready) {
-		XUartPs_Config *config = XUartPs_LookupConfig(XPAR_XUARTPS_0_BASEADDR);
-		if (config == nullptr) {
-			return false;
-		}
-
-		int status = XUartPs_CfgInitialize(&g_uart, config, config->BaseAddress);
-		if (status != XST_SUCCESS) {
-			return false;
-		}
-
-		XUartPs_SetOperMode(&g_uart, XUARTPS_OPER_MODE_NORMAL);
-		g_uart_ready = true;
-	}
-
-	return XUartPs_SetBaudRate(&g_uart, baud_rate) == XST_SUCCESS;
+	XTime ticks;
+	XTime_GetTime(&ticks);
+	return ticks;
 }
 
-bool uart_read_byte(u8 *value)
+u64 microseconds_to_ticks(u32 delay_us)
 {
-	return XUartPs_Recv(&g_uart, value, 1) == 1;
+	return static_cast<u64>(delay_us) * kGlobalTimerCountsPerMicrosecond;
 }
 
-void uart_write(const u8 *data, size_t length)
+void buffered_wait_until_tick(u64 deadline_ticks)
 {
-	if (length == 0) {
-		return;
-	}
+	while (true) {
+		const u64 current_ticks = now_ticks();
+		if (current_ticks >= deadline_ticks) {
+			return;
+		}
 
-	XUartPs_Send(&g_uart, const_cast<u8 *>(data), static_cast<u32>(length));
-	while (XUartPs_IsSending(&g_uart) != 0) {
+		const u64 remaining_ticks = deadline_ticks - current_ticks;
+		const u64 remaining_us = remaining_ticks / kGlobalTimerCountsPerMicrosecond;
+		if (remaining_us > kBufferedSleepMarginUs) {
+			TimerDelay(static_cast<u32>(remaining_us - kBufferedSleepMarginUs));
+		}
 	}
 }
 
@@ -151,19 +154,17 @@ u8 calc_checksum(u8 type, u16 length, const u8 *payload)
 
 void send_frame(u8 type, const u8 *payload, u16 length)
 {
-	u8 header[5];
-	header[0] = kSync0;
-	header[1] = kSync1;
-	header[2] = type;
-	header[3] = static_cast<u8>(length & 0xFF);
-	header[4] = static_cast<u8>((length >> 8) & 0xFF);
-	u8 checksum = calc_checksum(type, length, payload);
-
-	uart_write(header, sizeof(header));
+	u8 frame[5 + 1024 + 1];
+	frame[0] = kSync0;
+	frame[1] = kSync1;
+	frame[2] = type;
+	frame[3] = static_cast<u8>(length & 0xFF);
+	frame[4] = static_cast<u8>((length >> 8) & 0xFF);
 	if (length > 0) {
-		uart_write(payload, length);
+		std::memcpy(&frame[5], payload, length);
 	}
-	uart_write(&checksum, 1);
+	frame[5 + length] = calc_checksum(type, length, payload);
+	transport_write(frame, static_cast<size_t>(length) + 6U);
 }
 
 void send_ok(u8 request_type)
@@ -178,23 +179,32 @@ void send_error(u8 code)
 
 void send_hello()
 {
-	u8 payload[16];
+	u8 payload[24];
+	const TransportCapabilities &caps = transport_get_capabilities();
 	payload[0] = kVersionMajor;
 	payload[1] = kVersionMinor;
 	payload[2] = static_cast<u8>(kQueueCapacity & 0xFF);
 	payload[3] = static_cast<u8>((kQueueCapacity >> 8) & 0xFF);
-	payload[4] = static_cast<u8>(kStreamBaud & 0xFF);
-	payload[5] = static_cast<u8>((kStreamBaud >> 8) & 0xFF);
-	payload[6] = static_cast<u8>((kStreamBaud >> 16) & 0xFF);
-	payload[7] = static_cast<u8>((kStreamBaud >> 24) & 0xFF);
-	payload[8] = static_cast<u8>(kCliBaud & 0xFF);
-	payload[9] = static_cast<u8>((kCliBaud >> 8) & 0xFF);
-	payload[10] = static_cast<u8>((kCliBaud >> 16) & 0xFF);
-	payload[11] = static_cast<u8>((kCliBaud >> 24) & 0xFF);
+	payload[4] = static_cast<u8>(caps.stream_hint & 0xFF);
+	payload[5] = static_cast<u8>((caps.stream_hint >> 8) & 0xFF);
+	payload[6] = static_cast<u8>((caps.stream_hint >> 16) & 0xFF);
+	payload[7] = static_cast<u8>((caps.stream_hint >> 24) & 0xFF);
+	payload[8] = static_cast<u8>(caps.cli_hint & 0xFF);
+	payload[9] = static_cast<u8>((caps.cli_hint >> 8) & 0xFF);
+	payload[10] = static_cast<u8>((caps.cli_hint >> 16) & 0xFF);
+	payload[11] = static_cast<u8>((caps.cli_hint >> 24) & 0xFF);
 	payload[12] = static_cast<u8>(kSongBufferSize & 0xFF);
 	payload[13] = static_cast<u8>((kSongBufferSize >> 8) & 0xFF);
 	payload[14] = static_cast<u8>((kSongBufferSize >> 16) & 0xFF);
 	payload[15] = static_cast<u8>((kSongBufferSize >> 24) & 0xFF);
+	payload[16] = static_cast<u8>(caps.max_frame_payload & 0xFF);
+	payload[17] = static_cast<u8>((caps.max_frame_payload >> 8) & 0xFF);
+	payload[18] = static_cast<u8>(caps.upload_chunk_bytes & 0xFF);
+	payload[19] = static_cast<u8>((caps.upload_chunk_bytes >> 8) & 0xFF);
+	payload[20] = static_cast<u8>(caps.transport_flags & 0xFF);
+	payload[21] = static_cast<u8>((caps.transport_flags >> 8) & 0xFF);
+	payload[22] = static_cast<u8>((caps.transport_flags >> 16) & 0xFF);
+	payload[23] = static_cast<u8>((caps.transport_flags >> 24) & 0xFF);
 	send_frame(static_cast<u8>(kTypeHello | kResponseMask), payload, sizeof(payload));
 }
 
@@ -257,6 +267,7 @@ void buffered_stop_playback()
 {
 	g_song.play_offset = 0;
 	g_song.playback_active = false;
+	g_debug_buffered_play_offset = 0;
 }
 
 void stop_all_playback()
@@ -453,10 +464,12 @@ bool end_upload()
 	return true;
 }
 
-bool play_buffered_song()
+bool play_buffered_song_impl(bool send_response)
 {
 	if (!g_song.loaded_ready || g_song.loaded_size == 0) {
-		send_error(11);
+		if (send_response) {
+			send_error(11);
+		}
 		return false;
 	}
 
@@ -465,18 +478,28 @@ bool play_buffered_song()
 	opl_reset_core();
 	g_song.play_offset = 0;
 	g_song.playback_active = true;
+	g_debug_buffered_stage = 1;
+	g_debug_buffered_play_offset = 0;
+	g_debug_buffered_events_done = 0;
+	XTime start_ticks = 0;
+	XTime_GetTime(&start_ticks);
+	g_debug_buffered_start_ticks = start_ticks;
+	g_debug_buffered_end_ticks = 0;
+	u64 next_event_ticks = start_ticks;
 
 	while (g_song.play_offset < g_song.loaded_size) {
 		BufferedEvent current_event;
 		if (!parse_buffered_event(g_song.play_offset, &current_event)) {
 			buffered_stop_playback();
-			send_error(10);
+			g_debug_buffered_stage = 0xEE;
+			if (send_response) {
+				send_error(10);
+			}
 			return false;
 		}
 
-		if (current_event.delay_us > 0) {
-			TimerDelay((current_event.delay_us * kBufferedTimerDelayNum) / kBufferedTimerDelayDen);
-		}
+		next_event_ticks += microseconds_to_ticks(current_event.delay_us);
+		buffered_wait_until_tick(next_event_ticks);
 
 		for (u8 i = 0; i < current_event.count; ++i) {
 			const u8 *write = current_event.writes + (i * 3);
@@ -484,11 +507,25 @@ bool play_buffered_song()
 		}
 
 		g_song.play_offset += current_event.size_bytes;
+		g_debug_buffered_play_offset = g_song.play_offset;
+		++g_debug_buffered_events_done;
 	}
 
 	buffered_stop_playback();
-	send_ok(kTypePlayBuffered);
+	g_debug_buffered_stage = 2;
+	XTime end_ticks = 0;
+	XTime_GetTime(&end_ticks);
+	g_debug_buffered_end_ticks = end_ticks;
+	if (send_response) {
+		send_ok(kTypePlayBuffered);
+	}
+	g_debug_buffered_stage = 3;
 	return true;
+}
+
+bool play_buffered_song()
+{
+	return play_buffered_song_impl(true);
 }
 
 bool handle_frame(u8 type, const u8 *payload, u16 length, bool *keep_running)
@@ -565,7 +602,7 @@ bool feed_parser(FrameParser *parser, u8 byte, bool *keep_running)
 	case FrameParser::READ_LEN1:
 		parser->length |= static_cast<u16>(byte) << 8;
 		parser->payload_index = 0;
-		if (parser->length > kFramePayloadMax) {
+		if (parser->length > g_frame_payload_max) {
 			parser->state = FrameParser::WAIT_SYNC0;
 			send_error(3);
 			break;
@@ -597,23 +634,36 @@ bool feed_parser(FrameParser *parser, u8 byte, bool *keep_running)
 
 int stream_session(void)
 {
-	if (!uart_init(kStreamBaud)) {
-		xil_printf("UART init failed.\r\n");
+	if (transport_open_stream() != XST_SUCCESS) {
+		xil_printf("Transport init failed.\r\n");
 		return -1;
 	}
+
+	const TransportCapabilities &caps = transport_get_capabilities();
+	g_frame_payload_max = caps.max_frame_payload;
+	g_upload_chunk_bytes = caps.upload_chunk_bytes;
+	g_transport_flags = caps.transport_flags;
 
 	queue_clear();
 	buffered_reset_metadata();
 	opl_reset_core();
-	send_hello();
+	if (caps.send_hello_on_open) {
+		send_hello();
+	}
 
 	FrameParser parser;
 	bool keep_running = true;
 	while (keep_running) {
 		bool did_work = false;
 
+		if (g_debug_jtag_play_request != 0U) {
+			g_debug_jtag_play_request = 0;
+			g_debug_jtag_play_result = play_buffered_song_impl(false) ? 1U : 2U;
+			did_work = true;
+		}
+
 		u8 byte = 0;
-		while (uart_read_byte(&byte)) {
+		while (transport_read_byte(&byte)) {
 			feed_parser(&parser, byte, &keep_running);
 			did_work = true;
 		}
@@ -629,6 +679,6 @@ int stream_session(void)
 		}
 	}
 
-	uart_init(kCliBaud);
+	transport_close_stream();
 	return 0;
 }

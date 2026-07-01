@@ -21,10 +21,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-import serial.tools.list_ports
 
 from midi_loader import LoadedMidi, load_midi_file
-from protocol import ProtocolError, ZyboTransport
+from protocol import ProtocolError, ZyboTransport, list_usb_devices
 from song_builder import BuiltSong, build_preloaded_song
 from vgm_loader import LoadedVgm, load_vgm_file
 
@@ -39,13 +38,13 @@ class PlayerThread(QThread):
     playback_finished = Signal()
     connected = Signal(str)
 
-    def __init__(self, port: str, song: LoadedSong) -> None:
+    def __init__(self, device_key: str, song: LoadedSong) -> None:
         super().__init__()
-        self.port = port
+        self.device_key = device_key
         self.song = song
 
     def run(self) -> None:
-        transport = ZyboTransport(self.port)
+        transport = ZyboTransport(self.device_key)
 
         try:
             self.status_changed.emit("正在构建 OPL 事件")
@@ -56,12 +55,12 @@ class PlayerThread(QThread):
             self.progress_changed.emit(5)
             hello = transport.open()
             self.connected.emit(
-                f"已连接，协议 {hello.version_major}.{hello.version_minor}，板端缓存 {hello.preload_capacity // 1024} KB"
+                f"已连接，协议 {hello.version_major}.{hello.version_minor}，板端缓冲 {hello.preload_capacity // 1024} KB"
             )
 
             if hello.preload_capacity and len(built_song.data) > hello.preload_capacity:
                 raise ProtocolError(
-                    f"曲目转换后为 {len(built_song.data)} 字节，超过板端缓存上限 {hello.preload_capacity} 字节"
+                    f"曲目转换后为 {len(built_song.data)} 字节，超过板端缓冲上限 {hello.preload_capacity} 字节"
                 )
 
             self.status_changed.emit("正在上传到板端内存")
@@ -85,7 +84,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Zybo OPL3 复古音乐播放器")
-        self.resize(780, 360)
+        self.resize(820, 380)
 
         self.song: Optional[LoadedSong] = None
         self.player_thread: Optional[PlayerThread] = None
@@ -96,12 +95,12 @@ class MainWindow(QMainWindow):
 
         conn_group = QGroupBox("连接设置")
         conn_layout = QGridLayout(conn_group)
-        self.port_combo = QComboBox()
-        self.refresh_button = QPushButton("刷新串口")
+        self.device_combo = QComboBox()
+        self.refresh_button = QPushButton("刷新设备")
         self.connect_button = QPushButton("连接测试")
         self.connect_status = QLabel("未连接")
-        conn_layout.addWidget(QLabel("串口"), 0, 0)
-        conn_layout.addWidget(self.port_combo, 0, 1)
+        conn_layout.addWidget(QLabel("USB 设备"), 0, 0)
+        conn_layout.addWidget(self.device_combo, 0, 1)
         conn_layout.addWidget(self.refresh_button, 0, 2)
         conn_layout.addWidget(self.connect_button, 0, 3)
         conn_layout.addWidget(QLabel("状态"), 1, 0)
@@ -138,7 +137,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(playback_group)
         layout.addStretch(1)
 
-        self.refresh_button.clicked.connect(self.refresh_ports)
+        self.refresh_button.clicked.connect(self.refresh_devices)
         self.file_button.clicked.connect(self.select_file)
         self.connect_button.clicked.connect(self.test_connection)
         self.play_button.clicked.connect(self.start_playback)
@@ -146,17 +145,18 @@ class MainWindow(QMainWindow):
         self.stop_button.clicked.connect(self.stop_playback)
         self.restart_button.clicked.connect(self.restart_playback)
 
-        self.refresh_ports()
+        self.refresh_devices()
         self._set_buttons(is_playing=False)
 
-    def refresh_ports(self) -> None:
-        current = self.port_combo.currentText()
-        self.port_combo.clear()
-        for port in serial.tools.list_ports.comports():
-            self.port_combo.addItem(port.device)
-        index = self.port_combo.findText(current)
-        if index >= 0:
-            self.port_combo.setCurrentIndex(index)
+    def refresh_devices(self) -> None:
+        current_key = self.device_combo.currentData()
+        self.device_combo.clear()
+        for device in list_usb_devices():
+            self.device_combo.addItem(device.label, device.key)
+        if current_key is not None:
+            index = self.device_combo.findData(current_key)
+            if index >= 0:
+                self.device_combo.setCurrentIndex(index)
 
     def select_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -181,16 +181,16 @@ class MainWindow(QMainWindow):
         self._set_buttons(is_playing=False)
 
     def test_connection(self) -> None:
-        port = self.port_combo.currentText().strip()
-        if not port:
-            QMessageBox.warning(self, "串口未选择", "请先选择串口。")
+        device_key = self.device_combo.currentData()
+        if not device_key:
+            QMessageBox.warning(self, "设备未选择", "请先选择 USB 设备。")
             return
 
-        transport = ZyboTransport(port)
+        transport = ZyboTransport(device_key)
         try:
             hello = transport.open()
             self.connect_status.setText(
-                f"已连接，协议 {hello.version_major}.{hello.version_minor}，板端缓存 {hello.preload_capacity // 1024} KB"
+                f"已连接，协议 {hello.version_major}.{hello.version_minor}，板端缓冲 {hello.preload_capacity // 1024} KB"
             )
             self.status_label.setText("当前状态：已连接")
         except Exception as exc:
@@ -202,15 +202,16 @@ class MainWindow(QMainWindow):
     def start_playback(self) -> None:
         if self.player_thread is not None and self.player_thread.isRunning():
             return
-        port = self.port_combo.currentText().strip()
-        if not port:
-            QMessageBox.warning(self, "串口未选择", "请先选择串口。")
+
+        device_key = self.device_combo.currentData()
+        if not device_key:
+            QMessageBox.warning(self, "设备未选择", "请先选择 USB 设备。")
             return
         if self.song is None:
             QMessageBox.warning(self, "文件未选择", "请先选择一个音乐文件。")
             return
 
-        self.player_thread = PlayerThread(port, self.song)
+        self.player_thread = PlayerThread(device_key, self.song)
         self.player_thread.status_changed.connect(self.on_status_changed)
         self.player_thread.progress_changed.connect(self.progress.setValue)
         self.player_thread.error_occurred.connect(self.on_error)

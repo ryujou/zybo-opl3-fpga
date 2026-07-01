@@ -10,18 +10,17 @@
 #      E.g. source /opt/Xilinx/Vivado/2025.2/settings64.sh
 #           source /opt/Xilinx/Vitis/2025.2/settings64.sh
 #
-#	2. Run 'make' to build all the FPGA and software necessary to run the OPL3
-#	   and create an SD card image.
+#	2. Run 'make' to build all the FPGA and software necessary to run the OPL3.
 #
-#	3. Copy the resulting BOOT.bin to an SD card, insert it into the ZYBO.
+#	3. Recommended dev flow is JTAG download of bitstream + ELF.
 #
-#	4. Set JP5 to SD.
+#	4. Connect the USB data cable to the board and PC.
 #
-#	5. Connect the USB cable to PROG/UART, connect to PC.
+#	5. Use the Python USB host app for MIDI/VGM/VGZ upload and playback.
 #
-#	6. Run a terminal program, use 115200 baud, 8-N-1.
+#	6. For CLI/debug only, UART still uses 115200 8-N-1.
 #
-#	7. Power on the ZYBO. In your terminal you should see:
+#	7. Power on the ZYBO. In your CLI terminal you should see:
 #          Welcome to the OPL3 FPGA
 #
 #          Type 'help' for a list of commands
@@ -62,6 +61,10 @@
 #
 #******************************************************************************
 sd: all BOOT.bin
+qspi-image: BOOT.bin
+
+qspi-program: BOOT.bin
+	powershell -ExecutionPolicy Bypass -File software/qspi/program_qspi.ps1
 
 all:
 	cd fpga && make bitstream

@@ -28,11 +28,18 @@ def load_vgm_file(path: str) -> LoadedVgm:
     file_path = Path(path)
     raw = file_path.read_bytes()
     data = gzip.decompress(raw) if file_path.suffix.lower() == ".vgz" else raw
-    if data[:4] != b"Vgm ":
+    if len(data) < 0x40 or data[:4] != b"Vgm ":
         raise ValueError("不是有效的 VGM/VGZ 文件")
 
     version = _u32(data, 0x08)
     data_offset = _u32(data, 0x34)
+    ym3812_clock = _u32(data, 0x50)
+    ymf262_clock = _u32(data, 0x5C)
+
+    # If the file only declares YM3812, force C0-C8 panning bits so an OPL3 core
+    # sends OPL2-era channels to both left and right.
+    opl2_compat_mode = ym3812_clock != 0 and ymf262_clock == 0
+
     data_start = 0x34 + data_offset if version >= 0x00000150 and data_offset else 0x40
 
     events: List[OplStreamEvent] = []
@@ -42,6 +49,7 @@ def load_vgm_file(path: str) -> LoadedVgm:
     pos = data_start
 
     while pos < len(data):
+        cmd_offset = pos
         cmd = data[pos]
         pos += 1
 
@@ -49,76 +57,143 @@ def load_vgm_file(path: str) -> LoadedVgm:
             break
 
         if cmd == 0x61:
-            wait_samples = _u16(data, pos)
+            wait_samples = _u16_checked(data, pos, cmd_offset, cmd)
             pos += 2
-            _flush_pending(events, pending_writes, pending_delay_us)
-            total_us += pending_delay_us
-            pending_delay_us = _samples_to_us(wait_samples)
+            wait_us = _samples_to_us(wait_samples)
+            pending_delay_us = _flush_pending(events, pending_writes, pending_delay_us)
+            pending_delay_us += wait_us
+            total_us += wait_us
             continue
 
         if cmd == 0x62:
-            _flush_pending(events, pending_writes, pending_delay_us)
-            total_us += pending_delay_us
-            pending_delay_us = _samples_to_us(735)
+            wait_us = _samples_to_us(735)
+            pending_delay_us = _flush_pending(events, pending_writes, pending_delay_us)
+            pending_delay_us += wait_us
+            total_us += wait_us
             continue
 
         if cmd == 0x63:
-            _flush_pending(events, pending_writes, pending_delay_us)
-            total_us += pending_delay_us
-            pending_delay_us = _samples_to_us(882)
+            wait_us = _samples_to_us(882)
+            pending_delay_us = _flush_pending(events, pending_writes, pending_delay_us)
+            pending_delay_us += wait_us
+            total_us += wait_us
             continue
 
         if 0x70 <= cmd <= 0x7F:
-            _flush_pending(events, pending_writes, pending_delay_us)
-            total_us += pending_delay_us
-            pending_delay_us = _samples_to_us((cmd & 0x0F) + 1)
+            wait_us = _samples_to_us((cmd & 0x0F) + 1)
+            pending_delay_us = _flush_pending(events, pending_writes, pending_delay_us)
+            pending_delay_us += wait_us
+            total_us += wait_us
             continue
 
+        # YM2612 DAC write + wait n samples. We do not replay the DAC write for
+        # an OPL-only player, but the wait must be preserved.
+        if 0x80 <= cmd <= 0x8F:
+            wait_us = _samples_to_us(cmd & 0x0F)
+            pending_delay_us = _flush_pending(events, pending_writes, pending_delay_us)
+            pending_delay_us += wait_us
+            total_us += wait_us
+            continue
+
+        # YM3812 / OPL2 first chip.
         if cmd == 0x5A:
-            reg = data[pos]
-            value = data[pos + 1]
+            reg, value = _read_reg_value(data, pos, cmd_offset, cmd)
             pos += 2
+            if opl2_compat_mode and 0xC0 <= reg <= 0xC8:
+                value |= 0x30
             pending_writes.append(OplWrite(0, reg, value))
             continue
 
+        # YMF262 / OPL3 first chip, port 0 / port 1.
         if cmd == 0x5E:
-            reg = data[pos]
-            value = data[pos + 1]
+            reg, value = _read_reg_value(data, pos, cmd_offset, cmd)
             pos += 2
             pending_writes.append(OplWrite(0, reg, value))
             continue
 
         if cmd == 0x5F:
-            reg = data[pos]
-            value = data[pos + 1]
+            reg, value = _read_reg_value(data, pos, cmd_offset, cmd)
             pos += 2
             pending_writes.append(OplWrite(1, reg, value))
             continue
 
-        if cmd in (0x4F, 0x50):
-            pos += 1
-            continue
-
-        if cmd in (0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5B, 0x5C):
+        # Second YM3812 / dual OPL2. A single OPL3 can approximate this by
+        # mapping chip 0 to bank 0 and chip 1 to bank 1.
+        if cmd == 0xAA:
+            reg, value = _read_reg_value(data, pos, cmd_offset, cmd)
             pos += 2
+            if opl2_compat_mode and 0xC0 <= reg <= 0xC8:
+                value |= 0x30
+            pending_writes.append(OplWrite(1, reg, value))
             continue
 
+        # Game Gear stereo / SN76489 PSG write. Not relevant for OPL-only output.
+        if cmd in (0x4F, 0x50):
+            pos = _skip(data, pos, 1, cmd_offset, cmd)
+            continue
+
+        # Other common two-byte chip writes. Ignore non-OPL chips so mixed logs
+        # can still load, but do not corrupt the stream position.
+        if cmd in (
+            0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59,
+            0x5B, 0x5C, 0x5D,
+        ):
+            pos = _skip(data, pos, 2, cmd_offset, cmd)
+            continue
+
+        # Second-chip writes for other chips. 0xAE/0xAF are second YMF262 and
+        # require a second OPL3 chip; this one-OPL3 player ignores them for now.
+        if 0xA0 <= cmd <= 0xBF:
+            pos = _skip(data, pos, 2, cmd_offset, cmd)
+            continue
+
+        # Data block: 0x67 0x66 tt ss ss ss ss [data...]
         if cmd == 0x67:
-            if data[pos] != 0x66:
-                raise ValueError("VGM 数据块格式错误")
-            block_size = _u32(data, pos + 2)
-            pos += 6 + block_size
+            if pos >= len(data) or data[pos] != 0x66:
+                raise ValueError(f"VGM 数据块格式错误，offset=0x{cmd_offset:X}")
+            block_size = _u32_checked(data, pos + 2, cmd_offset, cmd)
+            pos = _skip(data, pos, 6 + block_size, cmd_offset, cmd)
             continue
 
+        # PCM RAM write: 0x68 0x66 cc oo oo oo dd dd dd ss ss ss
+        if cmd == 0x68:
+            if pos >= len(data) or data[pos] != 0x66:
+                raise ValueError(f"VGM PCM RAM 写入格式错误，offset=0x{cmd_offset:X}")
+            pos = _skip(data, pos, 11, cmd_offset, cmd)
+            continue
+
+        # DAC stream control commands. They are often present in modern VGMs;
+        # this OPL-only loader can skip them unless you later add PCM streaming.
+        if cmd == 0x90:
+            pos = _skip(data, pos, 4, cmd_offset, cmd)
+            continue
+        if cmd == 0x91:
+            pos = _skip(data, pos, 4, cmd_offset, cmd)
+            continue
+        if cmd == 0x92:
+            pos = _skip(data, pos, 5, cmd_offset, cmd)
+            continue
+        if cmd == 0x93:
+            pos = _skip(data, pos, 10, cmd_offset, cmd)
+            continue
+        if cmd == 0x94:
+            pos = _skip(data, pos, 1, cmd_offset, cmd)
+            continue
+        if cmd == 0x95:
+            pos = _skip(data, pos, 4, cmd_offset, cmd)
+            continue
+
+        # Seek to PCM data bank. Irrelevant for OPL-only playback.
         if cmd == 0xE0:
-            pos += 4
+            pos = _skip(data, pos, 4, cmd_offset, cmd)
             continue
 
-        raise ValueError(f"暂不支持的 VGM 指令: 0x{cmd:02X}")
+        raise ValueError(
+            f"暂不支持的 VGM 指令: 0x{cmd:02X}，offset=0x{cmd_offset:X}，near={_near(data, cmd_offset)}"
+        )
 
     if pending_writes:
         events.append(OplStreamEvent(delta_us=pending_delay_us, writes=list(pending_writes)))
-        total_us += pending_delay_us
 
     return LoadedVgm(events=events, total_us=total_us, title=file_path.name)
 
@@ -127,20 +202,50 @@ def _flush_pending(
     events: List[OplStreamEvent],
     pending_writes: List[OplWrite],
     pending_delay_us: int,
-) -> None:
+) -> int:
     if not pending_writes:
-        return
+        return pending_delay_us
     events.append(OplStreamEvent(delta_us=pending_delay_us, writes=list(pending_writes)))
     pending_writes.clear()
+    return 0
 
 
 def _samples_to_us(samples: int) -> int:
     return int(round(samples * 1_000_000 / VGM_SAMPLE_RATE))
 
 
+def _read_reg_value(data: bytes, offset: int, cmd_offset: int, cmd: int) -> tuple[int, int]:
+    if offset + 2 > len(data):
+        raise ValueError(f"VGM 指令 0x{cmd:02X} 在 offset=0x{cmd_offset:X} 后数据不足")
+    return data[offset], data[offset + 1]
+
+
+def _skip(data: bytes, offset: int, count: int, cmd_offset: int, cmd: int) -> int:
+    new_offset = offset + count
+    if new_offset > len(data):
+        raise ValueError(f"VGM 指令 0x{cmd:02X} 在 offset=0x{cmd_offset:X} 后数据不足，需要跳过 {count} 字节")
+    return new_offset
+
+
+def _near(data: bytes, offset: int, count: int = 16) -> str:
+    return data[offset : min(len(data), offset + count)].hex(" ")
+
+
 def _u16(data: bytes, offset: int) -> int:
     return int.from_bytes(data[offset : offset + 2], "little")
 
 
+def _u16_checked(data: bytes, offset: int, cmd_offset: int, cmd: int) -> int:
+    if offset + 2 > len(data):
+        raise ValueError(f"VGM 指令 0x{cmd:02X} 在 offset=0x{cmd_offset:X} 后数据不足")
+    return _u16(data, offset)
+
+
 def _u32(data: bytes, offset: int) -> int:
     return int.from_bytes(data[offset : offset + 4], "little")
+
+
+def _u32_checked(data: bytes, offset: int, cmd_offset: int, cmd: int) -> int:
+    if offset + 4 > len(data):
+        raise ValueError(f"VGM 指令 0x{cmd:02X} 在 offset=0x{cmd_offset:X} 后数据不足")
+    return _u32(data, offset)

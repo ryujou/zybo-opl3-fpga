@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 
 import vitis
 
@@ -37,6 +38,20 @@ def get_or_create_app(client, platform_xpfm):
         )
 
 
+def sync_app_sources():
+    app_src = WORKSPACE / APP_NAME / "src"
+    source_src = SOFTWARE_DIR / "src"
+    app_src.mkdir(parents=True, exist_ok=True)
+    for item in source_src.iterdir():
+        target = app_src / item.name
+        if item.is_dir():
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(item, target)
+        else:
+            shutil.copy2(item, target)
+
+
 client = vitis.create_client()
 client.set_workspace(path=str(WORKSPACE))
 
@@ -45,5 +60,5 @@ platform.build()
 
 platform_xpfm = client.find_platform_in_repos(PLATFORM_NAME)
 comp = get_or_create_app(client, platform_xpfm)
-comp.import_files(from_loc=str(SOFTWARE_DIR), files=["src"])
+sync_app_sources()
 comp.build()

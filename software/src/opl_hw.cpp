@@ -8,12 +8,12 @@ void opl_write_reg(u8 reg, u8 data, u8 bank)
 	int address = bank ? 0x2 : 0x0;
 
 	Xil_Out8(XPAR_OPL3_FPGA_0_BASEADDR + address, reg);
-	for (int i = 0; i < 20; ++i) {
+	for (int i = 0; i < 6; ++i) {
 		Xil_In8(XPAR_OPL3_FPGA_0_BASEADDR);
 	}
 
 	Xil_Out8(XPAR_OPL3_FPGA_0_BASEADDR + 0x1, data);
-	for (int i = 0; i < 100; ++i) {
+	for (int i = 0; i < 24; ++i) {
 		Xil_In8(XPAR_OPL3_FPGA_0_BASEADDR);
 	}
 }
