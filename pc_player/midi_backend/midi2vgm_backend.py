@@ -5,10 +5,10 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 import config
 from midi_backend.base import MidiBackendError, MidiBuildResult
+from midi_sanitizer import sanitize_midi_to_temp_or_bytes
 from protocol import OplWrite
 from vgm_loader import OplStreamEvent, load_vgm_file
 
@@ -48,6 +48,9 @@ def _build_from_opl_events(events: list[OplStreamEvent], total_delay_us: int) ->
         write_list = list(event.writes)
         event_count += _append_event(payload, event.delta_us, write_list)
         write_count += len(write_list)
+
+    if not payload:
+        raise MidiBackendError("midi2vgm backend 生成的 VGM 未包含任何可播放 OPL 事件")
 
     return MidiBuildResult(
         data=bytes(payload),
@@ -111,24 +114,24 @@ def probe_midi2vgm_help(executable: Path) -> str:
     )
 
 
-def _infer_bank_args(help_text: str, bank_path: Path) -> list[str]:
-    lower = help_text.lower()
-    path_options = [
-        "--bank-file",
-        "--wopl",
-        "--op2",
-        "--ibk",
-        "--bank-path",
-        "--patch-file",
-        "--patchset-file",
-    ]
-    for option in path_options:
-        if option in lower:
-            return [option, str(bank_path)]
-    raise MidiBackendError(
-        "当前 midi2vgm_opl3 帮助信息中未发现可接收外部 bank 文件路径的参数，无法使用 config.MIDI2VGM_BANK_PATH。"
-        f"\n可执行文件帮助摘要：\n{help_text}\n项目地址：{PROJECT_URL}"
-    )
+def probe_midi2vgm_banks(executable: Path) -> str:
+    try:
+        completed = subprocess.run(
+            [str(executable), "--show-banks"],
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+        )
+    except OSError as exc:
+        raise MidiBackendError(f"无法读取 midi2vgm bank 列表：{exc}\n项目地址：{PROJECT_URL}") from exc
+
+    output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+    if not output:
+        raise MidiBackendError(
+            f"midi2vgm --show-banks 无输出，返回码 {completed.returncode}\n项目地址：{PROJECT_URL}"
+        )
+    return output
 
 
 def _stderr_tail(text: str, line_limit: int = 40) -> str:
@@ -138,19 +141,52 @@ def _stderr_tail(text: str, line_limit: int = 40) -> str:
     return "\n".join(lines[-line_limit:])
 
 
-def run_midi2vgm(input_mid: Path, output_vgm: Path, bank_path: Optional[Path]) -> Path:
-    executable = find_midi2vgm_executable()
-    help_text = probe_midi2vgm_help(executable)
-    cmd = [str(executable), "--in", str(input_mid), "--out", str(output_vgm)]
+def _stdout_tail(text: str, line_limit: int = 40) -> str:
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return "<empty>"
+    return "\n".join(lines[-line_limit:])
 
-    if bank_path is not None:
-        cmd.extend(_infer_bank_args(help_text, bank_path))
+
+def _resolve_bank_value() -> str | None:
+    bank_value = getattr(config, "MIDI2VGM_BANK", None)
+    if bank_value is None:
+        return None
+    return str(bank_value)
+
+
+def _check_legacy_bank_path() -> None:
+    bank_path = getattr(config, "MIDI2VGM_BANK_PATH", None)
+    if bank_path is None:
+        return
+    raise MidiBackendError(
+        "当前 SudoMaker/midi2vgm backend 使用 --bank 内置 bank 编号，不支持直接传 WOPL/OP2/IBK 文件路径。"
+        "请改用 MIDI2VGM_BANK，或运行 midi2vgm_opl3 --show-banks 查看可用 bank。"
+    )
+
+
+def run_midi2vgm(input_mid: Path, output_vgm: Path, bank_value: str | None) -> Path:
+    executable = find_midi2vgm_executable()
+    cmd = [str(executable), "--in", str(input_mid), "--out", str(output_vgm)]
+    if bank_value is not None:
+        cmd.extend(["--bank", bank_value])
 
     extra_args = list(config.MIDI2VGM_EXTRA_ARGS)
     if extra_args:
         cmd.extend(extra_args)
 
-    completed = subprocess.run(cmd, capture_output=True, text=True, check=False, shell=False)
+    try:
+        completed = subprocess.run(cmd, capture_output=True, text=True, check=False, shell=False)
+    except OSError as exc:
+        raise MidiBackendError(
+            "midi2vgm backend 执行失败。"
+            f"\n项目地址：{PROJECT_URL}"
+            f"\n可执行文件：{executable}"
+            f"\n输入 MIDI：{input_mid}"
+            f"\n输出 VGM：{output_vgm}"
+            f"\nOSError：{exc}"
+        ) from exc
+
     if completed.returncode != 0 or not output_vgm.is_file() or output_vgm.stat().st_size <= 0:
         raise MidiBackendError(
             "midi2vgm backend 执行失败。"
@@ -160,7 +196,7 @@ def run_midi2vgm(input_mid: Path, output_vgm: Path, bank_path: Optional[Path]) -
             f"\n输出 VGM：{output_vgm}"
             f"\n返回码：{completed.returncode}"
             f"\nstderr 摘要：\n{_stderr_tail(completed.stderr)}"
-            f"\nstdout 摘要：\n{_stderr_tail(completed.stdout)}"
+            f"\nstdout 摘要：\n{_stdout_tail(completed.stdout)}"
         )
     return executable
 
@@ -170,9 +206,8 @@ def build_with_midi2vgm(midi_path: str) -> MidiBuildResult:
     if not input_mid.is_file():
         raise MidiBackendError(f"MIDI 文件不存在：{input_mid}")
 
-    bank_path = Path(config.MIDI2VGM_BANK_PATH).resolve() if config.MIDI2VGM_BANK_PATH else None
-    if bank_path is not None and not bank_path.is_file():
-        raise MidiBackendError(f"config.py 中设置的 MIDI2VGM_BANK_PATH 不存在：{bank_path}")
+    _check_legacy_bank_path()
+    bank_value = _resolve_bank_value()
 
     keep_temp = bool(config.MIDI2VGM_KEEP_TEMP)
     if keep_temp:
@@ -182,18 +217,57 @@ def build_with_midi2vgm(midi_path: str) -> MidiBuildResult:
         temp_ctx = tempfile.TemporaryDirectory(prefix="midi2vgm_")
         temp_dir = Path(temp_ctx.name)
 
+    sanitized_path: Path | None = None
     try:
-        output_vgm = temp_dir / f"{input_mid.stem}.vgm"
-        executable = run_midi2vgm(input_mid, output_vgm, bank_path)
-        loaded_vgm = load_vgm_file(str(output_vgm))
-        built = _build_from_opl_events(loaded_vgm.events, loaded_vgm.total_us)
+        safe_input_mid = temp_dir / "input.mid"
+        safe_output_vgm = temp_dir / "output.vgm"
+
+        try:
+            sanitized_path = sanitize_midi_to_temp_or_bytes(str(input_mid))
+            shutil.copy2(sanitized_path, safe_input_mid)
+        except Exception:
+            shutil.copy2(input_mid, safe_input_mid)
+
+        executable = run_midi2vgm(safe_input_mid, safe_output_vgm, bank_value)
+
+        try:
+            loaded_vgm = load_vgm_file(str(safe_output_vgm))
+        except ValueError as exc:
+            raise MidiBackendError(
+                "midi2vgm backend 输出 VGM 解析失败。"
+                f"\noriginal_input_mid={input_mid}"
+                f"\nsafe_input_mid={safe_input_mid}"
+                f"\nsafe_output_vgm={safe_output_vgm}"
+                f"\n{exc}"
+            ) from exc
+
+        try:
+            built = _build_from_opl_events(loaded_vgm.events, loaded_vgm.total_us)
+        except (ValueError, OverflowError, MidiBackendError) as exc:
+            raise MidiBackendError(
+                "midi2vgm backend 输出事件构建失败。"
+                f"\noriginal_input_mid={input_mid}"
+                f"\nsafe_input_mid={safe_input_mid}"
+                f"\nsafe_output_vgm={safe_output_vgm}"
+                f"\n{exc.__class__.__name__}: {exc}"
+            ) from exc
+
         built.diagnostic = (
-            f"midi2vgm backend: exe={executable}; input={input_mid}; output={output_vgm}; "
-            f"bank={bank_path if bank_path else '<default>'}"
+            f"midi2vgm backend: exe={executable}; original_input_mid={input_mid}; "
+            f"safe_input_mid={safe_input_mid}; safe_output_vgm={safe_output_vgm}; "
+            f"sanitized_source={sanitized_path if sanitized_path else '<copy-original>'}; "
+            f"bank={bank_value if bank_value is not None else '<default>'}"
         )
         if keep_temp:
             built.diagnostic += "; temp=kept"
         return built
+    except MidiBackendError as exc:
+        raise MidiBackendError(
+            f"{exc}"
+            f"\noriginal_input_mid={input_mid}"
+            f"\nsafe_input_mid={temp_dir / 'input.mid'}"
+            f"\nsafe_output_vgm={temp_dir / 'output.vgm'}"
+        ) from exc
     finally:
         if temp_ctx is not None:
             temp_ctx.cleanup()

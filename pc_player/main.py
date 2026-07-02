@@ -37,7 +37,6 @@ class PlayerThread(QThread):
     status_changed = Signal(str)
     progress_changed = Signal(int)
     error_occurred = Signal(str)
-    playback_finished = Signal()
     connected = Signal(str)
 
     def __init__(self, device_key: str, song: LoadedSong) -> None:
@@ -105,7 +104,6 @@ class PlayerThread(QThread):
             self.error_occurred.emit(str(exc))
         finally:
             transport.close()
-            self.playback_finished.emit()
 
     def _monitor_playback(self, transport: ZyboTransport, total_delay_us: int) -> None:
         total_seconds = max(total_delay_us / 1_000_000.0, 0.0)
@@ -180,18 +178,17 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
 
-        conn_group = QGroupBox("连接设置")
+        conn_group = QGroupBox("设备")
         conn_layout = QGridLayout(conn_group)
-        self.device_combo = QComboBox()
+        self.device_key: str | None = None
+        self.device_label = QLabel("未发现设备")
         self.refresh_button = QPushButton("刷新设备")
-        self.connect_button = QPushButton("连接测试")
         self.connect_status = QLabel("未连接")
-        conn_layout.addWidget(QLabel("USB 设备"), 0, 0)
-        conn_layout.addWidget(self.device_combo, 0, 1)
+        conn_layout.addWidget(QLabel("检测结果"), 0, 0)
+        conn_layout.addWidget(self.device_label, 0, 1)
         conn_layout.addWidget(self.refresh_button, 0, 2)
-        conn_layout.addWidget(self.connect_button, 0, 3)
         conn_layout.addWidget(QLabel("状态"), 1, 0)
-        conn_layout.addWidget(self.connect_status, 1, 1, 1, 3)
+        conn_layout.addWidget(self.connect_status, 1, 1, 1, 2)
 
         file_group = QGroupBox("曲目文件")
         file_layout = QHBoxLayout(file_group)
@@ -226,7 +223,6 @@ class MainWindow(QMainWindow):
 
         self.refresh_button.clicked.connect(self.refresh_devices)
         self.file_button.clicked.connect(self.select_file)
-        self.connect_button.clicked.connect(self.test_connection)
         self.play_button.clicked.connect(self.start_playback)
         self.pause_button.clicked.connect(self.pause_playback)
         self.stop_button.clicked.connect(self.stop_playback)
@@ -235,15 +231,62 @@ class MainWindow(QMainWindow):
         self.refresh_devices()
         self._set_buttons(is_playing=False)
 
+    def _selected_device_key(self) -> str | None:
+        return self.device_key
+
+    def _connect_device(self, *, show_dialog: bool) -> bool:
+        device_key = self._selected_device_key()
+        if not device_key:
+            message = "未发现 Zybo OPL3 USB 设备。"
+            self.connect_status.setText("未发现设备")
+            if show_dialog:
+                QMessageBox.warning(self, "设备未发现", message)
+            else:
+                self.status_label.setText("当前状态：未发现设备")
+            return False
+
+        transport = ZyboTransport(device_key)
+        self.connect_status.setText("连接中")
+        try:
+            hello = transport.open()
+            self.connect_status.setText(
+                f"已连接，协议 {hello.version_major}.{hello.version_minor}，板端缓冲 {hello.preload_capacity // 1024} KB"
+            )
+            self.status_label.setText("当前状态：已连接")
+            return True
+        except Exception as exc:
+            self.connect_status.setText("错误")
+            if show_dialog:
+                QMessageBox.critical(self, "连接失败", f"无法连接板子：{exc}")
+            else:
+                self.status_label.setText("当前状态：连接失败")
+            return False
+        finally:
+            transport.close()
+
     def refresh_devices(self) -> None:
-        current_key = self.device_combo.currentData()
-        self.device_combo.clear()
-        for device in list_usb_devices():
-            self.device_combo.addItem(device.label, device.key)
-        if current_key is not None:
-            index = self.device_combo.findData(current_key)
-            if index >= 0:
-                self.device_combo.setCurrentIndex(index)
+        devices = list_usb_devices()
+        if devices:
+            device = devices[0]
+            self.device_key = device.key
+            self.device_label.setText(device.label)
+            if self.connect_status.text() in ("未连接", "未发现设备", "错误", "连接中"):
+                self.connect_status.setText("待连接")
+            return
+
+        self.device_key = None
+        self.device_label.setText("未发现设备")
+        self.connect_status.setText("未发现设备")
+        if self.player_thread is None or not self.player_thread.isRunning():
+            self.status_label.setText("当前状态：未发现设备")
+
+    def _stop_active_playback_for_reload(self) -> None:
+        if self.player_thread is None or not self.player_thread.isRunning():
+            return
+        self.status_label.setText("当前状态：正在停止当前播放并加载新文件")
+        self.player_thread.request_stop()
+        self.player_thread.wait()
+        self.progress.setValue(0)
 
     def select_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -254,6 +297,8 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+
+        self._stop_active_playback_for_reload()
 
         try:
             self.song = load_song(path)
@@ -267,42 +312,27 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self._set_buttons(is_playing=False)
 
-    def test_connection(self) -> None:
-        device_key = self.device_combo.currentData()
-        if not device_key:
-            QMessageBox.warning(self, "设备未选择", "请先选择 USB 设备。")
-            return
 
-        transport = ZyboTransport(device_key)
-        try:
-            hello = transport.open()
-            self.connect_status.setText(
-                f"已连接，协议 {hello.version_major}.{hello.version_minor}，板端缓冲 {hello.preload_capacity // 1024} KB"
-            )
-            self.status_label.setText("当前状态：已连接")
-        except Exception as exc:
-            QMessageBox.critical(self, "连接失败", f"无法连接板子：{exc}")
-            self.connect_status.setText("错误")
-        finally:
-            transport.close()
 
     def start_playback(self) -> None:
         if self.player_thread is not None and self.player_thread.isRunning():
             return
 
-        device_key = self.device_combo.currentData()
-        if not device_key:
-            QMessageBox.warning(self, "设备未选择", "请先选择 USB 设备。")
-            return
         if self.song is None:
             QMessageBox.warning(self, "文件未选择", "请先选择一个音乐文件。")
             return
 
+        device_key = self._selected_device_key()
+        if not self._connect_device(show_dialog=False):
+            QMessageBox.critical(self, "连接失败", "未发现板子或无法连接，请检查 USB 连接和驱动。")
+            return
+
+        assert device_key is not None
         self.player_thread = PlayerThread(device_key, self.song)
         self.player_thread.status_changed.connect(self.on_status_changed)
         self.player_thread.progress_changed.connect(self.progress.setValue)
         self.player_thread.error_occurred.connect(self.on_error)
-        self.player_thread.playback_finished.connect(self.on_finished)
+        self.player_thread.finished.connect(self.on_thread_finished)
         self.player_thread.connected.connect(self.on_connected)
         self.player_thread.start()
         self.is_paused = False
@@ -339,18 +369,18 @@ class MainWindow(QMainWindow):
         self.connect_status.setText(text)
 
     def on_error(self, text: str) -> None:
-        self.player_thread = None
         self.is_paused = False
         self.pause_button.setText("暂停")
         self.status_label.setText("当前状态：错误")
         self._set_buttons(is_playing=False)
         QMessageBox.critical(self, "播放失败", text)
 
-    def on_finished(self) -> None:
+    def on_thread_finished(self) -> None:
         self.player_thread = None
         self.is_paused = False
         self.pause_button.setText("暂停")
         self._set_buttons(is_playing=False)
+        self.status_label.setText("当前状态：未连接")
 
     def _set_buttons(self, *, is_playing: bool) -> None:
         has_song = self.song is not None

@@ -32,7 +32,8 @@ def run() -> None:
     original_exe = config.MIDI2VGM_EXE_PATH
     original_keep_temp = config.MIDI2VGM_KEEP_TEMP
     original_extra_args = list(config.MIDI2VGM_EXTRA_ARGS)
-    original_bank = config.MIDI2VGM_BANK_PATH
+    original_bank = getattr(config, 'MIDI2VGM_BANK', None)
+    original_bank_path = config.MIDI2VGM_BANK_PATH
     try:
         song = load_midi_file(str(temp_mid))
 
@@ -62,7 +63,8 @@ def run() -> None:
         config.MIDI2VGM_EXE_PATH = original_exe
         config.MIDI2VGM_KEEP_TEMP = original_keep_temp
         config.MIDI2VGM_EXTRA_ARGS = original_extra_args
-        config.MIDI2VGM_BANK_PATH = original_bank
+        config.MIDI2VGM_BANK = original_bank
+        config.MIDI2VGM_BANK_PATH = original_bank_path
         if temp_mid.exists():
             temp_mid.unlink()
 
