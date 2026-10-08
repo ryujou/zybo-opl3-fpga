@@ -6,7 +6,7 @@
 
 工具链为现有 Vitis 2025.2。依赖现有 `fpga/build/opl3.bit` 和 `vitis_project/opl3_platform/export/opl3_platform` 中的 BSP、XPFM、FSBL。库源码位于 `third_party/libadlmidi`，不从网络下载，也不使用上位机缓存。
 
-`firmware/usb_midi` 提供本机验收的 `opl3_usb_midi.elf` 和 SD 启动镜像 `BOOT.bin`。可以直接使用预编译镜像；源码构建产物仍输出到 `build/usb_midi`。
+`firmware/usb_midi` 提供本机验收的 `opl3_usb_midi.elf` 和 SD/QSPI 启动镜像 `BOOT.bin`。可以直接使用预编译镜像；源码构建产物仍输出到 `build/usb_midi`。
 
 ```powershell
 $env:XILINX_VITIS = 'J:/FPGA/2025.2/Vitis'
@@ -104,6 +104,26 @@ python -B software/usb_midi/hardware_reconnect.py
 将 `build/usb_midi/BOOT.bin` 放入 FAT32 microSD 卡根目录。断电后插入 J4，将 JP5 置于丝印 `SD` 位置，按 JP7 选择的供电源重新上电。镜像自带 FPGA 配置和应用，不需要 DRO 文件系统或 MIDI 文件。
 
 更换启动模式需断电重启；仅按复位按钮不会重新采样 JP5。SD 启动时可以不接 JTAG，J9 保持与电脑连接。
+
+## QSPI 烧录与启动
+
+原版 Zybo 板载 Spansion S25FL128S，容量 16 MiB。使用匹配平台的 FSBL，通过 J11/JTAG 将同一个 `BOOT.bin` 写入地址 0。命令会擦除镜像占用的扇区；操作时需独占该板卡的下载时段。
+
+启动硬件服务后，列出目标并选定要烧录的板卡 ARM DAP：
+
+```powershell
+& "$env:XILINX_VITIS/bin/program_flash.bat" -jtagtargets -url tcp:localhost:3121
+$midiFlashTarget = 'jsn-Zybo-210279540276A-4ba00477-0' # 本机 Zybo 的 ARM DAP；按目标列表修改
+& "$env:XILINX_VITIS/bin/program_flash.bat" `
+    -f firmware/usb_midi/BOOT.bin `
+    -fsbl vitis_project/opl3_platform/export/opl3_platform/sw/boot/fsbl.elf `
+    -flash_type qspi-x4-single -offset 0 -verify `
+    -target_name $midiFlashTarget -url tcp:localhost:3121
+```
+
+成功输出应包含 `Verify Operation successful.` 和 `Flash Operation Successful`。本机已完成 2647492 字节镜像写入与完整回读校验。
+
+脱离 JTAG 启动时，**断电，将 JP5 跳线放到中间一对 `QSPI` 引脚，再重新上电**。跳线状态仅在上电时采样，按复位按钮不会切换启动模式。固件启动后，J9 接电脑、播放器选择 `Zybo OPL3 MIDI`，音乐从 J5 输出。QSPI 冷启动的物理验收状态见 `progress.md`。
 
 ## 实现与测量
 

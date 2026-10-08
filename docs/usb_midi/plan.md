@@ -4,6 +4,6 @@
 2. JTAG 枚举：下载现有 bitstream 与 MIDI ELF，确认 Windows 使用系统 MIDI 驱动，MIDI 播放器能列出并打开输出设备。
 3. 演奏验收：单音、多音、128 音色、16 通道、鼓组、控制器、复位、密集消息，随后连续播放至少 30 分钟并读取计数和内部延迟。
 4. VGM/VGZ 转换：纯 Python 核心和批量 GUI，保留专辑目录；验证全部转换输出，选取两首完整播放并验证 FPGA 波形。
-5. SD 启动：生成三分区启动镜像；确认 SD 冷启动、USB 插拔及再次播放。
+5. 非易失启动：生成 FSBL、bitstream、MIDI ELF 三分区镜像；写入板载 QSPI 地址 0 并完整回读校验，确认 SD/QSPI 冷启动、USB 插拔及再次播放。
 
 当前完成情况和硬件待验证项目见 `progress.md`；构建和连接步骤见 `project.md`。

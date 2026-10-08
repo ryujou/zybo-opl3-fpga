@@ -9,12 +9,12 @@ set nm [file join $vitis gnu/aarch32/nt/gcc-arm-none-eabi/bin/arm-none-eabi-nm.e
 if {[catch {
     connect -url tcp:localhost:3121
     targets -set -nocase -filter {name =~ "*Cortex-A9 MPCore #0*"}
-    stop
+    if {![dict get [lindex [targets -target-properties -filter {is_current == 1}] 0] suspended]} { stop }
     # Reset PS peripherals and caches before loading a replacement standalone image.
     rst -system
     after 500
     targets -set -nocase -filter {name =~ "*Cortex-A9 MPCore #0*"}
-    stop
+    if {![dict get [lindex [targets -target-properties -filter {is_current == 1}] 0] suspended]} { stop }
     source [file join $root vitis_project/opl3_platform/export/opl3_platform/hw/sdt/ps7_init.tcl]
     ps7_init
     targets -set -nocase -filter {name =~ "*xc7z010*"}

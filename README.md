@@ -44,18 +44,20 @@
 | **J9 USB OTG** | 接 Windows，承载 USB-MIDI 数据；JP1 断开，使用 USB 外设模式。 |
 | **J11 USB** | JTAG/UART 下载与调试接口，亦可按板卡电源配置供电。 |
 | **J5 Headphone Out** | 接耳机或有源音箱。 |
-| **JP5** | 选择启动模式；SD 启动时在断电状态下设置为 SD。 |
+| **JP5** | 断电设置启动模式：SD 卡用 `SD`；板载 Flash 用中间一对 `QSPI` 引脚。 |
 
 预编译产物：
 
 | 文件 | 用途 |
 | --- | --- |
-| [BOOT.bin](firmware/usb_midi/BOOT.bin) | SD 启动镜像，包含 FSBL、OPL3 bitstream 和 MIDI 固件。 |
+| [BOOT.bin](firmware/usb_midi/BOOT.bin) | SD/QSPI 启动镜像，包含 FSBL、OPL3 bitstream 和 MIDI 固件。 |
 | [opl3_usb_midi.elf](firmware/usb_midi/opl3_usb_midi.elf) | MIDI 裸机应用 ELF，供匹配的平台和 FPGA 配置使用。 |
 
 在 GitHub 文件页面点击 **Download raw file** 下载二进制。将 `BOOT.bin` 放到 FAT32 microSD 根目录，断电设置启动跳线，再给板卡供电。JTAG 下载和平台准备步骤见 [构建与连接说明](docs/usb_midi/project.md)。
 
-> 镜像打包、JTAG 启动和 Windows 枚举已验证。脱离 JTAG 的 SD 卡冷启动仍待实物验收。
+板载 **QSPI 写入与完整回读校验已通过**。使用 Flash 启动时，断电把 JP5 设置到中间的 `QSPI` 引脚，再重新上电。可重复烧录命令见 [QSPI 烧录与启动](docs/usb_midi/project.md#qspi-烧录与启动)。
+
+> 镜像打包、QSPI 写入校验、JTAG 启动和 Windows 枚举已验证。脱离 JTAG 的 SD/QSPI 冷启动仍待实物验收。
 
 ### 2. 选择 MIDI 输出并播放
 
@@ -176,14 +178,15 @@ PS 的 AXI 主接口连接 OPL3 IP；自定义包装层输出左右声道的 I²
 | Python 转换 | **86 / 86**，376581 个音符、1237114 个事件；时长一致、Note On/Off 配对完整 |
 | GUI | 整批转换、窗口响应、取消、报错与失败后继续处理均通过 |
 | 数字音频 | ILA 验证左右声像、停止后静音、OPL3 PCM 与 I²S 对应关系 |
+| QSPI | S25FL128S / 16 MiB；2647492 字节镜像写入地址 0，完整回读校验通过 |
 
 排队和处理时间是板端实测值，不包含 Windows 调度、USB 到达回调前的时间或模拟音频延迟。当前 Python 转换输出已完成主机验证；板卡两首演奏与波形验收使用的是单独记录的 MIDI 样本。
 
-**仍待实物验证：**耳机/音箱听感与模拟电平、实际 USB 拔插、SD 冷启动；当前 Python 转换输出的板卡演奏尚未复测。Falcosoft 与 Drumstick 界面兼容性尚未实测。
+**仍待实物验证：**耳机/音箱听感与模拟电平、实际 USB 拔插、SD/QSPI 冷启动；当前 Python 转换输出的板卡演奏尚未复测。Falcosoft 与 Drumstick 界面兼容性尚未实测。
 
 ## 源码构建
 
-### ARM 固件与 SD 镜像
+### ARM 固件与 SD/QSPI 镜像
 
 构建依赖 Vivado/Vitis **2025.2** 及匹配的导出平台。以下生成文件由本机平台提供，不随仓库分发：
 

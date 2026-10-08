@@ -43,11 +43,19 @@
 - Cynthia 使用 `Zybo OPL3 MIDI` 输出按 All Once 顺序完整播完上述两首，最后一首显示 `01m 36s 513ms`，全部 11809 个文件事件读取完毕并停止。两轮播放后板端累计处理/接收事件均为 44977，队列溢出、畸形输入和 USB 发送错误仍为零；最大排队 547 µs。
 - 板卡曲目测试只覆盖这两首样本。当前 Python 转换输出完成主机侧验证，尚未复测板卡演奏。
 
+## QSPI
+
+- 检测到板载 Spansion S25FL128S，容量 16 MiB，页大小 256 字节、擦除扇区 64 KiB。
+- `firmware/usb_midi/BOOT.bin` 共 2647492 字节，从地址 0 写入；擦除范围为 `0x000000–0x28FFFF`，未执行整片擦除。
+- `program_flash` 完整回读并逐字节比较成功，输出 `Verify Operation successful.`、`Flash Operation Successful`。
+- 烧录后已通过 JTAG 启动正式镜像，串口出现 `USB-MIDI ready: CAFE:4013, bank 58`；Windows 再次枚举为 `Zybo OPL3 MIDI`，状态正常。
+- 当前 BOOT_MODE 读取为 0，即 JP5 仍处于 JTAG 模式；QSPI 冷启动尚未物理验证，需要断电设置 JP5 后重新上电。
+
 ## 尚未物理验证
 
 - 耳机/音箱实际听感、模拟音频电平。
 - 实际拔插 USB 后再次播放。
-- 脱离 JTAG 的 SD 卡冷启动。
+- 脱离 JTAG 的 SD/QSPI 冷启动。
 - Falcosoft 和 Drumstick 的播放器界面兼容性。
 
-数字波形、Windows 枚举与成功构建不替代上述物理验证。正式 SD 镜像使用 `fpga/build/opl3.bit`，不包含 ILA。
+数字波形、Windows 枚举与成功构建不替代上述物理验证。正式 SD/QSPI 镜像使用 `fpga/build/opl3.bit`，不包含 ILA。
