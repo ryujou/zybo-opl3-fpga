@@ -3,11 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-import config
-from midi_backend.base import MidiBackendError, MidiBuildResult
-from midi_backend.midi2vgm_backend import build_with_midi2vgm
-from midi_backend.python_fallback import build_with_python_fallback
-from midi_loader import LoadedMidi
 from protocol import OplWrite
 from vgm_loader import LoadedVgm, OplStreamEvent
 
@@ -25,46 +20,10 @@ class BuiltSong:
     write_count: int
     total_delay_us: int
     backend_name: str = "vgm loader"
-    diagnostic: str = ""
 
 
-def build_preloaded_song(song: LoadedMidi | LoadedVgm) -> BuiltSong:
-    if isinstance(song, LoadedMidi):
-        return _build_from_midi(song)
-    if isinstance(song, LoadedVgm):
-        return _build_from_opl_events(song.events, song.total_us)
-    raise TypeError(f"不支持的曲目类型: {type(song)!r}")
-
-
-def _build_from_midi(midi_data: LoadedMidi) -> BuiltSong:
-    backend = getattr(config, "MIDI_BACKEND", "auto")
-    if backend == "python":
-        return _result_to_built_song(build_with_python_fallback(midi_data))
-
-    if backend == "midi2vgm":
-        return _result_to_built_song(build_with_midi2vgm(midi_data.source_path))
-
-    if backend != "auto":
-        raise MidiBackendError(f"config.MIDI_BACKEND 配置无效: {backend!r}")
-
-    try:
-        result = build_with_midi2vgm(midi_data.source_path)
-        return _result_to_built_song(result)
-    except MidiBackendError as exc:
-        fallback = build_with_python_fallback(midi_data)
-        fallback.diagnostic = f"midi2vgm backend failed, fallback to python mapper: {exc}"
-        return _result_to_built_song(fallback)
-
-
-def _result_to_built_song(result: MidiBuildResult) -> BuiltSong:
-    return BuiltSong(
-        data=result.data,
-        event_count=result.event_count,
-        write_count=result.write_count,
-        total_delay_us=result.total_delay_us,
-        backend_name=result.backend_name,
-        diagnostic=result.diagnostic,
-    )
+def build_preloaded_song(song: LoadedVgm) -> BuiltSong:
+    return _build_from_opl_events(song.events, song.total_us)
 
 
 def _build_from_opl_events(events: Iterable[OplStreamEvent], total_delay_us: int) -> BuiltSong:
@@ -93,10 +52,8 @@ def _append_event(payload: bytearray, delay_us: int, writes: Iterable[OplWrite])
       uint8  write_count
       repeated write_count times: uint8 bank, uint8 reg, uint8 value
 
-    Some VGMs, including DOOM tracks, contain a very large initialization burst
-    before the first wait. The old code tried to store 465 in one byte and
-    raised ValueError: byte must be in range(0, 256). Split the burst into
-    multiple zero-delay chunks after the first chunk.
+    Large VGM initialization bursts use multiple chunks. Only the first chunk
+    carries the delay, so simultaneous register writes keep their timing.
     """
     write_list = list(writes)
     if not write_list:

@@ -1,4 +1,4 @@
-"""Build the standalone MIDI ELF/SD image, or run native protocol/synth tests."""
+"""Build the dual-mode MIDI/VGM ELF and boot image, or run native tests."""
 import argparse
 import os
 from pathlib import Path

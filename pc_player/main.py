@@ -24,13 +24,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from midi_loader import LoadedMidi, load_midi_file
 from protocol import ProtocolError, ZyboTransport, list_usb_devices
 from song_builder import BuiltSong, build_preloaded_song
 from vgm_loader import LoadedVgm, load_vgm_file
-
-
-LoadedSong = LoadedMidi | LoadedVgm
 
 
 class PlayerThread(QThread):
@@ -39,7 +35,7 @@ class PlayerThread(QThread):
     error_occurred = Signal(str)
     connected = Signal(str)
 
-    def __init__(self, device_key: str, song: LoadedSong) -> None:
+    def __init__(self, device_key: str, song: LoadedVgm) -> None:
         super().__init__()
         self.device_key = device_key
         self.song = song
@@ -79,9 +75,6 @@ class PlayerThread(QThread):
                 raise ProtocolError("没有生成任何可播放的 OPL 事件")
 
             self.status_changed.emit(f"正在构建 OPL 事件：{built_song.backend_name}")
-            if built_song.diagnostic:
-                print(built_song.diagnostic)
-
             self.progress_changed.emit(5)
             hello = transport.open()
             self.connected.emit(
@@ -170,7 +163,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Zybo OPL3 VGM/VGZ 播放器")
         self.resize(820, 380)
 
-        self.song: Optional[LoadedSong] = None
+        self.song: Optional[LoadedVgm] = None
         self.player_thread: Optional[PlayerThread] = None
         self.is_paused = False
 
@@ -391,10 +384,8 @@ class MainWindow(QMainWindow):
         self.restart_button.setEnabled(has_song)
 
 
-def load_song(path: str) -> LoadedSong:
+def load_song(path: str) -> LoadedVgm:
     suffix = Path(path).suffix.lower()
-    if suffix in (".mid", ".midi"):
-        return load_midi_file(path)
     if suffix in (".vgm", ".vgz"):
         return load_vgm_file(path)
     raise ValueError(f"不支持的文件类型: {suffix}")

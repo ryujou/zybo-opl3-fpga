@@ -36,6 +36,7 @@ USB_INTERFACE = 0
 DEFAULT_UPLOAD_CHUNK_BYTES = 1024
 
 _LIBUSB_CANDIDATES = [
+    str(Path(__file__).resolve().with_name("libusb-1.0.dll")),
     r"C:\Espressif\tools\dfu-util\0.11\dfu-util-0.11-win64\libusb-1.0.dll",
     r"C:\Program Files (x86)\STMicroelectronics\stlink_server\libusb-1.0.dll",
 ]

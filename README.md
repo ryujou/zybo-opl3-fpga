@@ -9,6 +9,7 @@
 SW0 双模式 · FPGA OPL3 合成 · 原始 FM 音色 · 板载立体声音频输出
 
 <p>
+  <img src="https://img.shields.io/badge/Release-v1.0.0-23748b?style=flat-square" alt="Frozen release: v1.0.0">
   <img src="https://img.shields.io/badge/Board-Zybo_XC7Z010-4d6984?style=flat-square" alt="Board: Zybo XC7Z010">
   <img src="https://img.shields.io/badge/USB--MIDI-1.0-23748b?style=flat-square" alt="USB-MIDI 1.0">
   <img src="https://img.shields.io/badge/Firmware-Bare_metal-b38645?style=flat-square" alt="Bare-metal firmware">
@@ -16,11 +17,19 @@ SW0 双模式 · FPGA OPL3 合成 · 原始 FM 音色 · 板载立体声音频�
   <img src="https://img.shields.io/badge/Vivado_%2F_Vitis-2025.2-4d6984?style=flat-square" alt="Vivado and Vitis 2025.2">
 </p>
 
-[快速上手](#快速上手) · [转换器 GUI](#vgmvgz-转换器) · [硬件架构](#硬件架构) · [验证结果](#验证结果) · [源码构建](#源码构建)
+[下载 v1.0.0](https://github.com/ryujou/zybo-opl3-fpga/releases/tag/v1.0.0) · [快速上手](#快速上手) · [转换器 GUI](#vgmvgz-转换器) · [硬件架构](#硬件架构) · [源码构建](#源码构建)
 
 </div>
 
 电脑上的播放器把 MIDI 演奏消息发送给 `Zybo OPL3 MIDI`。Zynq ARM 上的 libADLMIDI 负责音色和声部分配，FPGA OPL3 负责 FM 合成，声音从 SSM2603 的耳机接口输出。SW0 关闭时，已有 `.mid` 使用标准 MIDI 播放器；SW0 开启时，使用项目播放器直接上传 `.vgm` / `.vgz` 中的 OPL 寄存器和等待时间，保留源文件的 FM 音色参数。
+
+**当前冻结版本：v1.0.0。** Windows 播放器与板端固件使用同一个发布基线。日常使用下载预编译文件即可。
+
+| 下载 | 用途 |
+| --- | --- |
+| [ZyboOPL3Player.exe](https://github.com/ryujou/zybo-opl3-fpga/releases/download/v1.0.0/ZyboOPL3Player.exe) | Windows 11 / x64 便携 VGM/VGZ 播放器，双击打开；已包含 Python、Qt 和 libusb。 |
+| [BOOT.bin](https://github.com/ryujou/zybo-opl3-fpga/releases/download/v1.0.0/BOOT.bin) | SD/QSPI 双模式启动镜像。 |
+| [opl3_dual.bit](https://github.com/ryujou/zybo-opl3-fpga/releases/download/v1.0.0/opl3_dual.bit) · [opl3_usb_midi.elf](https://github.com/ryujou/zybo-opl3-fpga/releases/download/v1.0.0/opl3_usb_midi.elf) | 配套 JTAG 配置与裸机应用。 |
 
 ## 项目亮点
 
@@ -52,13 +61,13 @@ SW0 双模式 · FPGA OPL3 合成 · 原始 FM 音色 · 板载立体声音频�
 
 | 文件 | 用途 |
 | --- | --- |
-| [BOOT.bin](firmware/usb_midi/BOOT.bin) | SD/QSPI 启动镜像，包含 FSBL、带 SW0 的 OPL3 bitstream 和双模式固件。 |
-| [opl3_dual.bit](firmware/usb_midi/opl3_dual.bit) | 带 SW0 的 FPGA 配置，供 JTAG 下载配合双模式 ELF 使用。 |
-| [opl3_usb_midi.elf](firmware/usb_midi/opl3_usb_midi.elf) | 双模式裸机应用 ELF，供匹配的平台和 FPGA 配置使用。 |
+| [BOOT.bin](firmware/BOOT.bin) | SD/QSPI 启动镜像，包含 FSBL、带 SW0 的 OPL3 bitstream 和双模式固件。 |
+| [opl3_dual.bit](firmware/opl3_dual.bit) | 带 SW0 的 FPGA 配置，供 JTAG 下载配合双模式 ELF 使用。 |
+| [opl3_usb_midi.elf](firmware/opl3_usb_midi.elf) | 双模式裸机应用 ELF，供匹配的平台和 FPGA 配置使用。 |
 
-在 GitHub 文件页面点击 **Download raw file** 下载二进制。将 `BOOT.bin` 放到 FAT32 microSD 根目录，断电设置启动跳线，再给板卡供电。JTAG 下载和平台准备步骤见 [构建与连接说明](docs/usb_midi/project.md)。
+在 GitHub 文件页面点击 **Download raw file** 下载二进制。将 `BOOT.bin` 放到 FAT32 microSD 根目录，断电设置启动跳线，再给板卡供电。JTAG 下载和平台准备步骤见 [构建与连接说明](docs/project.md)。
 
-板载 **QSPI 写入与完整回读校验已通过**。使用 Flash 启动时，断电把 JP5 设置到中间的 `QSPI` 引脚，再重新上电。可重复烧录命令见 [QSPI 烧录与启动](docs/usb_midi/project.md#qspi-烧录与启动)。
+板载 **QSPI 写入与完整回读校验已通过**。使用 Flash 启动时，断电把 JP5 设置到中间的 `QSPI` 引脚，再重新上电。可重复烧录命令见 [QSPI 烧录与启动](docs/project.md#qspi-烧录与启动)。
 
 > 镜像打包、QSPI 写入校验、JTAG 启动和 Windows 枚举已验证。脱离 JTAG 的 SD/QSPI 冷启动仍待实物验收。
 
@@ -76,15 +85,9 @@ Cynthia 已完成本机设备选择和外部 MIDI 文件播放验证。[Drumstic
 
 **SW0 开启（1）**，Windows 枚举为 `Zybo OPL3 USB Interface`（`CAFE:4012`，WinUSB）。MIDI 模式使用另一 PID `CAFE:4013` 和系统类驱动。
 
-```powershell
-git clone --branch usb-midi-opl3 https://github.com/ryujou/zybo-opl3-fpga.git
-cd zybo-opl3-fpga
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install mido PySide6 pyusb
-.\.venv\Scripts\python.exe -B pc_player/main.py
-```
+下载上面的 **ZyboOPL3Player.exe**，双击启动。
 
-点击 **刷新设备 → 选择文件 → 播放**。电脑端解压 VGZ、提取 OPL 写入并上传，板端按原时间播放；没有 GM 乐器映射。PyUSB 需要可用的 `libusb-1.0.dll`，本机搜索位置与连接说明见 [项目说明](docs/usb_midi/project.md#sw0-与原始-vgmvgz-播放)。
+点击 **刷新设备 → 选择文件 → 播放**。电脑端解压 VGZ、提取 OPL 写入并上传，板端按原时间播放；没有 GM 乐器映射。源码运行与 USB 库位置见 [项目说明](docs/project.md#sw0-与原始-vgmvgz-播放)。
 
 切换 SW0 后，当前曲目停止，USB 断开约两秒重新枚举。回到对应播放器刷新/重新选择设备，再开始播放。
 
@@ -95,6 +98,7 @@ python -m venv .venv
 可选工具：需要导出普通 `.mid` 时使用。保留原始 FM 音色时使用上面的直接播放模式。
 
 ```powershell
+.\.venv\Scripts\python.exe -m pip install -r tools/requirements.txt
 .\.venv\Scripts\python.exe -B tools/vgz2midi_gui.py
 ```
 
@@ -123,7 +127,7 @@ python -m venv .venv
 
 FM 音色映射为 GM 音色仍属于近似转换，包络和声部合并也可能改变听感；输出不承诺重现原始波形。时间使用整数 44.1 kHz 样本计数，完整保留单次播放时长并补齐 Note Off。
 
-音乐输入与生成的 MIDI 由使用者提供，`midi` 目录不纳入版本控制。详见 [转换说明](docs/usb_midi/project.md#vgz-转-midi)。
+音乐输入与生成的 MIDI 由使用者提供，`midi` 目录不纳入版本控制。详见 [转换说明](docs/project.md#vgz-转-midi)。
 
 ## 硬件架构
 
@@ -178,7 +182,7 @@ PS 的 AXI 主接口连接 OPL3 IP；自定义包装层输出左右声道的 I²
 
 ## 验证结果
 
-验证环境：**原版 Zybo / XC7Z010 · Windows 11 Pro 26200 · Vivado / Vitis 2025.2**。完整记录见 [实际验证状态](docs/usb_midi/progress.md)。
+验证环境：**原版 Zybo / XC7Z010 · Windows 11 Pro 26200 · Vivado / Vitis 2025.2**。完整记录见 [实际验证状态](docs/progress.md)。
 
 | 验证项 | 结果 |
 | --- | --- |
@@ -201,6 +205,25 @@ PS 的 AXI 主接口连接 OPL3 IP；自定义包装层输出左右声道的 I²
 
 ## 源码构建
 
+```powershell
+git clone --branch v1.0.0 https://github.com/ryujou/zybo-opl3-fpga.git
+cd zybo-opl3-fpga
+python -m venv .venv
+```
+
+### Windows 播放器与 EXE
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r pc_player/requirements.txt
+.\.venv\Scripts\python.exe -B pc_player/main.py
+
+# 打包为单文件 EXE，指定实际的 Windows x64 libusb DLL：
+.\.venv\Scripts\python.exe -m pip install -r pc_player/requirements-build.txt
+.\.venv\Scripts\python.exe -B pc_player/build_exe.py --libusb 'C:/path/to/libusb-1.0.dll'
+```
+
+输出：`dist/pc_player/ZyboOPL3Player.exe`。播放器、转换器和打包工具的版本分别固定在对应的 requirements 文件中。
+
 ### ARM 固件与 SD/QSPI 镜像
 
 构建依赖 Vivado/Vitis **2025.2** 及匹配的导出平台。以下生成文件由本机平台提供，不随仓库分发：
@@ -208,7 +231,7 @@ PS 的 AXI 主接口连接 OPL3 IP；自定义包装层输出左右声道的 I²
 - `fpga/build/post_syn.dcp`
 - `vitis_project/opl3_platform/export/opl3_platform` 中的 BSP、XPFM 和 FSBL
 
-准备匹配平台后，在仓库根目录运行，将工具链路径改为自己的安装位置：
+完整平台生成步骤见 [构建说明](docs/project.md#构建)。准备匹配平台后，在仓库根目录运行，将工具链路径改为自己的安装位置：
 
 ```powershell
 $env:XILINX_VITIS = 'J:/FPGA/2025.2/Vitis'
@@ -227,7 +250,7 @@ python -B software/usb_midi/build.py
 & "$env:XILINX_VITIS/bin/xsct.bat" software/usb_midi/hardware_download.tcl
 ```
 
-详细平台、启动和硬件用例见 [构建与连接说明](docs/usb_midi/project.md)。
+详细平台、启动和硬件用例见 [构建与连接说明](docs/project.md)。
 
 ### 主机测试
 
@@ -242,16 +265,33 @@ python -B software/usb_midi/build.py --test
 
 ## 代码导航
 
+```text
+zybo-opl3-fpga/
+├── firmware/              # v1.0.0 配套 BOOT.bin、bitstream、ELF
+├── fpga/                  # OPL3、AXI、I²S 与 Vivado 工程
+├── software/
+│   ├── usb_midi/          # 双模式固件、构建和硬件用例
+│   └── src/               # OPL 寄存器、Codec、播放协议与链接脚本
+├── pc_player/             # VGM/VGZ 播放器、EXE 打包与 tests/
+├── tools/                 # 可选 VGM/VGZ → MIDI 转换器
+├── third_party/           # 固定版本 libADLMIDI 与许可证
+└── docs/                  # 项目说明、验证状态、插图与 reference/
+```
+
+`build/`、`dist/` 和 `vitis_project/` 是本地构建输出，不纳入源码版本；音乐文件同样由使用者提供。
+
 | 路径 | 内容 |
 | --- | --- |
+| [pc_player](pc_player) | 原始 VGM/VGZ 播放器与单文件 EXE 构建 |
 | [tools/vgz2midi.py](tools/vgz2midi.py) | 纯 Python VGM/VGZ 解码、音色匹配与 MIDI 输出 |
 | [tools/vgz2midi_gui.py](tools/vgz2midi_gui.py) | PySide6 桌面 GUI |
 | [tools/opl_gm_bank58.json](tools/opl_gm_bank58.json) | 固定 bank 58 的 FM 音色匹配数据 |
 | [software/usb_midi](software/usb_midi) | 双模式裸机固件、独立构建、主机和硬件用例 |
 | [fpga](fpga) | OPL3 RTL、AXI、I²S 与 Zynq 工程 |
 | [third_party/libadlmidi](third_party/libadlmidi) | 固定版本音色与声部分配库 |
-| [firmware/usb_midi](firmware/usb_midi) | 预编译 ELF 与 SD 镜像 |
-| [docs/usb_midi](docs/usb_midi) | 确定需求、平台说明与实际验证状态 |
+| [firmware](firmware) | v1.0.0 配套启动镜像、bitstream 与 ELF |
+| [docs](docs) | 确定需求、平台说明与实际验证状态 |
+| [docs/reference](docs/reference) | YMF262 数据手册、FM 运算与上游参考资料 |
 
 ## 致谢与许可证
 
@@ -259,4 +299,6 @@ FPGA 核来自 [Greg Taylor / opl3_fpga](https://github.com/gtaylormb/opl3_fpga)
 
 Python 转换器、GUI 与匹配表按 **GPL-3.0-or-later** 提供，许可证文本见 [GPL-3](third_party/libadlmidi/LICENSE.GPL-3.txt)。OPL3 RTL 保留上游 **LGPL-3.0-or-later** 声明；其余来源模块与依赖遵循各文件和目录内的许可证。
 
-参考资料：[Digilent Zybo 手册](https://digilent.com/reference/_media/reference/programmable-logic/zybo/zybo_rm.pdf) · [USB-MIDI 1.0 规范](https://www.usb.org/sites/default/files/midi10.pdf) · [YMF262 数据手册](docs/ymf262.pdf)
+Windows EXE 所含运行库的版本、源码位置与许可证见 [THIRD_PARTY.txt](pc_player/THIRD_PARTY.txt)，该文件也包含在 EXE 中。
+
+参考资料：[Digilent Zybo 手册](https://digilent.com/reference/_media/reference/programmable-logic/zybo/zybo_rm.pdf) · [USB-MIDI 1.0 规范](https://www.usb.org/sites/default/files/midi10.pdf) · [YMF262 数据手册](docs/reference/ymf262.pdf)
