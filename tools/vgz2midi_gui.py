@@ -154,7 +154,7 @@ class ConverterWindow(QMainWindow):
         layout.addWidget(self.log)
 
         footer = QHBoxLayout()
-        note = QLabel("支持 OPL2 / OPL3 的 2-op 音乐。FM → GM 为近似转换。")
+        note = QLabel("OPL2 / OPL3 2-op · DRO2MIDI 匹配规则 · FM → GM 为近似转换。")
         note.setObjectName("muted")
         note.setWordWrap(True)
         footer.addWidget(note, 1)

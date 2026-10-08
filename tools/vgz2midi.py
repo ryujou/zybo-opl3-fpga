@@ -18,7 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 SAMPLE_RATE = 44100
 MELODIC_CHANNELS = tuple(channel for channel in range(16) if channel != 9)
 OPERATOR_OFFSETS = (0, 1, 2, 8, 9, 10, 16, 17, 18)
-MULTIPLIERS = (0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15)
 # Bass drum, snare, tom, cymbal and hi-hat in OPL rhythm mode.
 RHYTHM = ((6, 3, 35, 16), (7, 3, 38, 8), (8, 0, 45, 4),
           (8, 3, 49, 2), (7, 0, 42, 1))
@@ -51,24 +50,20 @@ def _patch_key(feedback, operators):
 # This small table is derived from the pinned, GPL-3.0-or-later libADLMIDI
 # instrument database; copyright and license are in third_party/libadlmidi.
 with Path(__file__).with_name("opl_gm_bank58.json").open(encoding="utf-8") as _file:
-    PATCHES = json.load(_file)["patches"]
+    _bank = json.load(_file)
+PATCHES = _bank["patches"]
 PATCH_KEYS = tuple(_patch_key(p["feedback"], p["operators"]) for p in PATCHES)
+SOURCE_PATCHES = {}
+for _patch in _bank["source_patches"]:
+    # Identical source patches can have several GM names; VGM loses that choice.
+    SOURCE_PATCHES.setdefault(_patch_key(_patch["feedback"], _patch["operators"]), _patch)
 
 
 def _patch_distance(a, b):
-    distance = 24 * ((a[0] ^ b[0]) & 1) + abs((a[0] >> 1) - (b[0] >> 1)) * 1.5
-    for offset in (1, 6):
-        x, y = a[offset], b[offset]
-        distance += 10 * abs(math.log2(MULTIPLIERS[x & 15] / MULTIPLIERS[y & 15]))
-        distance += 10 * bool((x ^ y) & 32) + 3 * bool((x ^ y) & 16)
-        distance += 2 * ((a[offset + 1] ^ b[offset + 1]) >> 6).bit_count()
-        for index, high_weight, low_weight in ((2, 1, 0.5), (3, 0.5, 1)):
-            distance += high_weight * abs((a[offset + index] >> 4) - (b[offset + index] >> 4))
-            distance += low_weight * abs((a[offset + index] & 15) - (b[offset + index] & 15))
-        distance += 12 * (a[offset + 4] != b[offset + 4])
-    if not a[0] & 1 and not b[0] & 1:
-        distance += abs((a[2] & 63) - (b[2] & 63)) / 4
-    return distance
+    # DRO2MIDI compareinstr(): normal/bass-drum register weights, after key normalization.
+    return sum(weight * abs(a[index] - b[index]) for index, weight in
+               ((0, 3), (1, 2), (2, 1), (3, 2), (4, 2), (5, 1),
+                (6, 2), (8, 2), (9, 2), (10, 1)))
 
 
 @lru_cache(maxsize=4096)
@@ -193,8 +188,10 @@ class OplToMidi:
             return
         operators = [self._operator(base, OPERATOR_OFFSETS[channel] + offset) for offset in (0, 3)]
         feedback = self.registers[base + 0xC0 + channel]
-        patch_index, approximate = _match_patch(_patch_key(feedback, operators))
-        patch = PATCHES[patch_index]
+        key = _patch_key(feedback, operators)
+        patch_index, approximate = _match_patch(key)
+        # Recover a known game's GM identity before approximating with bank 58.
+        patch = SOURCE_PATCHES.get(key, PATCHES[patch_index]) if approximate else PATCHES[patch_index]
         volume = round(127 * 10 ** (-0.75 * max(0, (operators[1][1] & 63)
                                                    - (patch["operators"][1][1] & 63)) / 40))
         pan = 64

@@ -9,12 +9,13 @@ import unittest
 import mido
 
 from vgz2midi import (ConversionCancelled, MELODIC_CHANNELS, OplToMidi,
-                      OPERATOR_OFFSETS, PATCHES, PATCH_KEYS, _match_patch,
+                      OPERATOR_OFFSETS, PATCHES, PATCH_KEYS, _match_patch, _patch_distance,
                       convert_file, find_inputs)
 
 
-def setup_voice(synth, voice=0, program=0, fnum=580, block=4, pan=0x30):
-    patch = next(p for p in PATCHES if not p["drum"] and p["program"] == program)
+def setup_voice(synth, voice=0, program=0, fnum=580, block=4, pan=0x30, patch=None):
+    if patch is None:
+        patch = next(p for p in PATCHES if not p["drum"] and p["program"] == program)
     bank, channel = divmod(voice, 9)
     base = bank * 256
     synth.write(1, 32)
@@ -54,6 +55,36 @@ def check_balanced(test, track):
 
 
 class ConverterTests(unittest.TestCase):
+    def test_dro2midi_reference_score(self):
+        # Golden result from the upstream C++ compareinstr(), not this implementation.
+        a = (8, 1, 143, 242, 244, 0, 1, 0, 242, 247, 0)
+        b = (8, 16, 68, 248, 119, 2, 17, 0, 243, 6, 0)
+        self.assertEqual(_patch_distance(a, b), 885)
+        self.assertEqual(_patch_distance(b, a), 885)
+        self.assertEqual(_patch_distance(a, a), 0)
+        carrier_level = list(a)
+        carrier_level[7] = 192
+        self.assertEqual(_patch_distance(a, carrier_level), 0)
+
+    def test_doom_guitar_and_kick_identity(self):
+        synth = OplToMidi("OPL3", 14318180, "DOOM")
+        # Captured source signatures: overdriven guitar and bass drum, not GM piano/taiko.
+        setup_voice(synth, patch={"feedback": 2, "operators":
+                                [[0x10, 6, 0xF1, 0xFF, 0], [0x11, 0, 0xF0, 0xFF, 1]]})
+        synth.flush()
+        programs = [m.program for m in synth.track if m.type == "program_change"]
+        self.assertEqual(programs, [29])
+        self.assertFalse(any(m.type == "note_on" and m.channel == 9 for m in synth.track))
+        synth.tick = 4410
+        setup_voice(synth, voice=1, patch={"feedback": 6, "operators":
+                                         [[0, 0, 0xFA, 0x47, 0], [0, 0, 0xF9, 6, 0]]})
+        synth.flush()
+        self.assertTrue(any(m.type == "note_on" and m.channel == 9 and m.note == 36
+                            for m in synth.track))
+        synth.release(0)
+        synth.release(1)
+        check_balanced(self, synth.track)
+
     def test_bank58_patch_lookup(self):
         for index, key in enumerate(PATCH_KEYS):
             matched, approximate = _match_patch(key)
