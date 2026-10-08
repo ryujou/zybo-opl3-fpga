@@ -1,151 +1,69 @@
-<div align="center">
+# Zybo OPL3 USB-MIDI 音源
 
-# Zybo OPL3 FPGA
+原版 Digilent Zybo / XC7Z010 上的 OPL3 FPGA 音源，使用 Vivado / Vitis 2025.2 和独立裸机固件 `opl3_usb_midi`。Windows 自动识别为 `Zybo OPL3 MIDI`，电脑上的 MIDI 播放器负责演奏时序，板端使用 libADLMIDI bank 58 分配声部并直接写 FPGA 寄存器。
 
-Zybo 平台上的 OPL3 FPGA 工程  
-当前仓库整理为 `Vivado / Vitis 2025.2` 版本
+本项目统一使用标准 USB-MIDI。VGZ 先在电脑上转换为普通 MIDI，再由同一个输出设备播放；原 Bulk/UART 播放器停用。
 
-<p>
-  <img src="https://img.shields.io/badge/Vivado-2025.2-BD1E24?style=for-the-badge" alt="Vivado 2025.2">
-  <img src="https://img.shields.io/badge/Vitis-2025.2-0C7BDC?style=for-the-badge" alt="Vitis 2025.2">
-  <img src="https://img.shields.io/badge/Board-Zybo-0F766E?style=for-the-badge" alt="Zybo">
-  <img src="https://img.shields.io/badge/Audio-OPL3-F59E0B?style=for-the-badge" alt="OPL3">
-  <img src="https://img.shields.io/badge/UI-%E4%B8%AD%E6%96%87-2563EB?style=for-the-badge" alt="中文 UI">
-</p>
-
-<img src="docs/readme-assets/design_1.png" alt="Vivado Block Design" width="92%">
-
-</div>
-
-## 上游项目
-
-- `gtaylormb/opl3_fpga`: <https://github.com/gtaylormb/opl3_fpga>
-- `SudoMaker/midi2vgm`: <https://github.com/SudoMaker/midi2vgm>
-
-本仓库基于 `gtaylormb/opl3_fpga` 整理，补充了 `Vivado/Vitis 2025.2` 构建路径，以及 PC 侧 `.mid/.midi/.vgm/.vgz` 播放支持。
-
-## 目录
-
-- [项目概览](#项目概览)
-- [当前范围](#当前范围)
-- [快速开始](#快速开始)
-- [硬件架构](#硬件架构)
-- [OPL3 核心细节](#opl3-核心细节)
-- [软件架构](#软件架构)
-- [文件格式支持](#文件格式支持)
-- [串口 CLI](#串口-cli)
-- [仓库结构](#仓库结构)
-- [构建与运行](#构建与运行)
-- [当前状态](#当前状态)
-- [限制](#限制)
-- [参考资料](#参考资料)
-
-## 项目概览
-
-| 项目项 | 当前方案 |
-| --- | --- |
-| 开发板 | `Digilent Zybo (Zynq-7000)` |
-| FPGA 工具链 | `Vivado 2025.2` |
-| PS 软件工具链 | `Vitis 2025.2` |
-| 板端运行时 | `standalone bare-metal` |
-| 上位机 | `Python + PySide6 + PyUSB` |
-| 默认下载方式 | `JTAG` |
-| 主通信链路 | `USB Bulk` |
-| 回退链路 | `UART` |
-| 音频输出 | `I2S -> SSM2603` |
-
-未纳入当前范围：
-
-- `Linux`
-- `PetaLinux`
-- `USB Audio / UAC`
-- 以 `BOOT.bin / SD 卡` 作为日常开发前提
-
-## 当前范围
-
-当前仓库包含以下整理项：
-
-- 适配 `Vivado/Vitis 2025.2`
-- 保留板端 `.dro/.imf` 播放路径
-- 新增 PC 侧中文 GUI
-- 支持 `.mid/.midi/.vgm/.vgz`
-- 采用“预加载到板端内存后再播放”的方式
-- 补充当前工程导出的 `BD / RTL` 图
-
-## 快速开始
-
-### 环境要求
-
-Windows 环境建议具备：
-
-- `Vivado 2025.2`
-- `Vitis 2025.2`
-- `Python 3.11+`
-- Zybo JTAG 驱动
-- 若使用 USB 上位机播放：为设备安装 `WinUSB`
-
-Python 依赖：
-
-```bash
-pip install -r pc_player/requirements.txt
+```mermaid
+flowchart LR
+    A[Windows MIDI 播放器] -->|USB-MIDI 1.0| B[Zynq ARM / libADLMIDI]
+    B -->|AXI 寄存器写入| C[FPGA OPL3]
+    C -->|I²S| D[SSM2603 / 耳机输出]
 ```
 
-### 构建硬件
+## 连接与播放
 
-```bash
-cd fpga
-make bitstream
-```
+1. Zybo 的 J9 USB OTG 接电脑，JP1 断开以使用 USB 外设模式。J11 为 JTAG/UART 和可选供电接口。
+2. 耳机或有源音箱接 J5 Headphone Out。
+3. 固件启动后 Windows 使用系统 MIDI 类驱动；播放器的输出设备选择 `Zybo OPL3 MIDI`，打开 `.mid` 即可播放。
 
-输出：
+开源播放器可选 [Cynthia](https://github.com/blaiz2023/Cynthia) 或 [Drumstick MIDI File Player](https://github.com/pedrolcl/dmidiplayer)。Cynthia 已在本机通过设备选择和外部 MIDI 文件播放测试，便携程序可从其上游仓库下载。
 
-- `fpga/build/opl3.bit`
-- `fpga/build/opl3.xsa`
+正常播放不需要 Python 上位机、loopMIDI 或 WinUSB 绑定。USB 接口承载 MIDI 消息，音频从板载接口输出。接口为 Full Speed、一个虚拟 cable、16 个 MIDI 通道；硬件复音由 OPL3 和音色引擎共同分配。
 
-### 构建板端软件
+## 构建与启动
 
-```bash
-vitis -s software/vitis_builder.py
-```
+可直接下载本机验收的 [SD 启动镜像](firmware/usb_midi/BOOT.bin) 和 [MIDI ELF](firmware/usb_midi/opl3_usb_midi.elf)。SD 镜像复制到 FAT32 卡根目录并命名为 `BOOT.bin`；SD 冷启动的物理验收状态见下方验证说明。
 
-输出：
-
-- `vitis_project/imfplay_port/build/imfplay_port.elf`
-
-### JTAG 下载
+在仓库根目录运行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File software/jtag/run_jtag.ps1
+$env:XILINX_VITIS = 'J:/FPGA/2025.2/Vitis'
+python -B software/usb_midi/build.py
 ```
 
-也可以显式指定文件：
+复用 `fpga/build/opl3.bit` 和现有导出平台 BSP/FSBL，固定库源码位于 `third_party/libadlmidi`。产物为 `build/usb_midi/opl3_usb_midi.elf`、链接 map 和 `build/usb_midi/BOOT.bin`。
+
+JTAG 下载：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File software/jtag/run_jtag.ps1 `
-  -Bitstream fpga/build/opl3.bit `
-  -Elf vitis_project/imfplay_port/build/imfplay_port.elf
+& "$env:XILINX_VITIS/bin/xsct.bat" software/usb_midi/hardware_download.tcl
 ```
 
-### 启动上位机
+需要本机 `hw_server` 运行于端口 3121，并在独占板卡下载时段操作。
 
-源码运行：
+SD 启动：将 `build/usb_midi/BOOT.bin` 复制到 FAT32 microSD 根目录，断电后将 JP5 设为 SD，再重新上电。镜像包含 FSBL、FPGA 配置和 MIDI 应用。
 
-```bash
-python pc_player/main.py
+详细的 Vitis 应用构建、接线、JTAG/ILA 测试和 SD 操作见 [构建与启动说明](docs/usb_midi/project.md)，已验证与待物理验证项见 [实际验证状态](docs/usb_midi/progress.md)。
+
+## VGZ 转换
+
+本机的 86 个 VGZ 已转换为普通 MIDI，输出到 `midi/converted` 并保留原专辑目录。音乐输入与转换结果由本地提供，`midi` 目录不纳入版本控制。首次使用转换工具需安装 Python 依赖和构建 Java 转换器：
+
+```powershell
+python -m pip install mido pyusb
+python -B tools/vgz2midi.py --build-converter
+python -B tools/vgz2midi.py
 ```
 
-打包版本：
+转换器构建需要 JDK（本机使用 JDK 24），运行使用 Java/Vgm3Mid 和 `mido`，对 OPL3 的两个寄存器组分别转换并合并声部。转换后的 GM 音色、包络和弯音可能与原始 VGZ 不同；具体转换依赖与通道约束见 [说明](docs/usb_midi/project.md#vgz-转-midi)。
 
-- `dist/ZyboOpl3Player/ZyboOpl3Player.exe`
+## 固件源码
 
-### 基本使用流程
-
-1. 通过 JTAG 下载 `bitstream` 和 `ELF`
-2. 将板子切换到 USB 连接方式并接入电脑
-3. 打开上位机
-4. 选择 USB 设备
-5. 选择本地 `.mid/.midi/.vgm/.vgz`
-6. 点击播放
+- `software/usb_midi`：USB 描述符和接收队列、MIDI 解析、实时合成、独立构建与硬件用例。
+- `third_party/libadlmidi`：固定提交 `84d27bc2bdbd6dd249537a7f7d2450cbd402482e`，FPGA 后端适配说明见 `LOCAL.txt`。
+- `software/src/opl_hw.cpp`、`ssm2603.cpp`：现有 AXI 寄存器访问和 Codec 初始化。
+- `fpga`：现有 OPL3 RTL、AXI、I²S 及 Zynq 工程。
 
 ## 硬件架构
 
@@ -184,8 +102,8 @@ flowchart LR
 
 相关源码：
 
-- [opl3_fpga_v2_0.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/opl3_fpga_2_0/src/opl3_fpga_v2_0.sv:1)
-- [opl3_fpga_v2_0_S_AXI.v](/J:/lumia/OPL3/opl3_fpga/fpga/modules/opl3_fpga_2_0/src/opl3_fpga_v2_0_S_AXI.v:1)
+- [opl3_fpga_v2_0.sv](fpga/modules/opl3_fpga_2_0/src/opl3_fpga_v2_0.sv#L1)
+- [opl3_fpga_v2_0_S_AXI.v](fpga/modules/opl3_fpga_2_0/src/opl3_fpga_v2_0_S_AXI.v#L1)
 
 RTL 图：
 
@@ -209,9 +127,9 @@ RTL 图：
 
 相关源码：
 
-- [opl3.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/top_level/src/opl3.sv:1)
-- [channels.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/channels/src/channels.sv:1)
-- [operator.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/operator/src/operator.sv:1)
+- [opl3.sv](fpga/modules/top_level/src/opl3.sv#L1)
+- [channels.sv](fpga/modules/channels/src/channels.sv#L1)
+- [operator.sv](fpga/modules/operator/src/operator.sv#L1)
 
 RTL 图：
 
@@ -342,9 +260,9 @@ flowchart TD
 
 README 不再放这一层的大图，但源码入口在：
 
-- [operator.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/operator/src/operator.sv:1)
-- [phase_generator.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/operator/src/phase_generator.sv:1)
-- [envelope_generator.sv](/J:/lumia/OPL3/opl3_fpga/fpga/modules/operator/src/envelope_generator.sv:1)
+- [operator.sv](fpga/modules/operator/src/operator.sv#L1)
+- [phase_generator.sv](fpga/modules/operator/src/phase_generator.sv#L1)
+- [envelope_generator.sv](fpga/modules/operator/src/envelope_generator.sv#L1)
 
 #### 包络与波形
 
@@ -357,229 +275,11 @@ README 不再放这一层的大图，但源码入口在：
 
 - `fpga/modules/operator/analysis/`
 
-## 软件架构
-
-### 总体结构
-
-```mermaid
-flowchart LR
-    GUI[PySide6 GUI] --> CTRL[player thread]
-    CTRL --> LOAD[load_song]
-    LOAD --> MIDI[midi_loader]
-    LOAD --> VGM[vgm_loader]
-    MIDI --> BUILD[song_builder]
-    VGM --> BUILD
-    BUILD --> USB[protocol / PyUSB]
-    USB --> BOARD[transport]
-    BOARD --> SCHED[buffered playback]
-    SCHED --> OPL[AXI write]
-```
-
-### PC 侧模块
-
-目录：`pc_player/`
-
-- `main.py`：GUI、设备枚举、播放线程
-- `protocol.py`：USB 协议
-- `vgm_loader.py`：`.vgm/.vgz` 解析
-- `midi_loader.py`：MIDI 解析
-- `song_builder.py`：统一构建板端预加载格式
-- `midi_backend/`：`midi2vgm` backend 与 Python fallback
-- `config.py`：backend 与外部工具路径配置
-
-PC 侧播放流程：
-
-1. 读取歌曲文件
-2. 转换为 OPL 事件
-3. 检查缓冲容量
-4. 上传到板端
-5. 触发板端本地播放
-
-### 板端模块
-
-目录：`software/src/`
-
-- `main.cpp`：程序入口
-- `opl_stream.cpp`：协议解析、缓冲区、预加载播放
-- `transport.cpp`：USB/UART 后端选择
-- `transport_usb.cpp`：USB Bulk 传输
-- `transport_uart.cpp`：UART 传输
-- `opl_hw.cpp`：AXI 寄存器写入
-- `imfplay.cpp`：`.imf/.dro` 本地播放器
-- `ssm2603.cpp`：板载 Codec 初始化
-
-### 板端播放模型
-
-```mermaid
-sequenceDiagram
-    participant PC as PC
-    participant Transport as USB/UART
-    participant BUF as Song Buffer
-    participant SCH as Scheduler
-    participant OPL as AXI to OPL3
-
-    PC->>Transport: HELLO / ENTER_STREAM
-    PC->>Transport: UPLOAD_BEGIN
-    PC->>Transport: UPLOAD_CHUNK
-    PC->>Transport: UPLOAD_END
-    PC->>Transport: PLAY_BUFFERED
-    Transport->>BUF: 写入整首歌曲事件
-    BUF->>SCH: 逐事件读取 delay_us + writes
-    SCH->>OPL: 按定时写入寄存器
-```
-
-### 通信接口
-
-#### USB
-
-当前 USB 设备参数：
-
-- `VID = 0xCAFE`
-- `PID = 0x4010`
-- 传输类型：`Bulk`
-
-若需通过 `PyUSB` 访问，Windows 下应为该设备安装 `WinUSB`。
-
-#### UART
-
-UART 用于：
-
-- CLI
-- USB 不可用时的回退链路
-
-参数：
-
-- CLI：`115200 8-N-1`
-- 流模式：`921600 8-N-1`
-
-## 文件格式支持
-
-### MIDI
-
-支持：
-
-- `.mid`
-- `.midi`
-
-默认策略：
-
-- `config.MIDI_BACKEND = "auto"`
-- 优先尝试 `midi2vgm_opl3`
-- 失败后回退到 Python mapper
-
-说明文档：
-
-- [docs/midi2vgm_backend.md](docs/midi2vgm_backend.md)
-
-### VGM / VGZ
-
-支持：
-
-- `.vgm`
-- `.vgz`
-
-当前解析器已处理：
-
-- `GD3` 偏移识别
-- 等待时间累加
-- OPL2 内容的 OPL3 声像位兼容
-
-## 串口 CLI
-
-串口 CLI 仍然保留：
-
-```text
-Welcome to the OPL3 FPGA
-
-Type 'help' for a list of commands
->
-```
-
-命令：
-
-- `help`
-- `ls`
-- `play doom_000.dro`
-- `stream`
-
-说明：
-
-- `play` 调用板端 `.dro/.imf` 播放器
-- `stream` 进入二进制传输模式，优先 USB，失败时回退 UART
-
-## 仓库结构
-
-```text
-fpga/                    Vivado 脚本、RTL、约束、构建产物
-software/src/            Zynq bare-metal 程序
-software/jtag/           XSCT / JTAG 下载脚本
-software/qspi/           QSPI / BOOT 相关脚本
-pc_player/               PC 侧上位机
-docs/                    文档、数据手册、导出图
-tools/                   本地第三方工具目录
-```
-
-## 构建与运行
-
-### 硬件
-
-`fpga/Makefile` 当前主要目标：
-
-- `make bd`
-- `make bitstream`
-- `make probes`
-- `make program`
-
-默认板型：
-
-- `BOARD = zybo`
-
-BD 脚本：
-
-- `fpga/bd/vivado_2025.2_bd.tcl`
-
-### 板端软件
-
-`software/vitis_builder.py` 负责：
-
-1. 创建或更新平台工程
-2. 同步 `software/src`
-3. 构建应用
-4. 生成 `ELF`
-
-### QSPI / BOOT
-
-仓库中保留了 `BOOT.bin` 与 QSPI 烧录相关脚本。当前默认开发路径仍为 JTAG。
-
-## 当前状态
-
-当前仓库已完成并验证：
-
-- `Vivado/Vitis 2025.2` 构建
-- JTAG 下载 `bitstream + ELF`
-- MIDI 播放链路
-- VGM/VGZ 播放链路
-- 板端 `.dro/.imf` 本地播放
-- 上位机设备枚举、歌曲上传与板端触发播放
-
-## 限制
-
-- 不枚举为标准 USB 声卡
-- GUI 中 `暂停/停止` 仍未实现为中断式板端控制
-- USB 枚举仍依赖当前驱动与上电时序
-- MIDI 听感取决于所选 backend 与 OPL patch
-- 长歌曲受板端预加载缓冲容量限制
-
 ## 参考资料
 
-- 原始项目：<https://github.com/gtaylormb/opl3_fpga>
-- `midi2vgm`：<https://github.com/SudoMaker/midi2vgm>
+- FPGA 上游：[gtaylormb/opl3_fpga](https://github.com/gtaylormb/opl3_fpga)
+- MIDI 音色引擎：[libADLMIDI](https://github.com/Wohlstand/libADLMIDI)
+- 现有 MIDI 转 VGM 工具来源：[SudoMaker/midi2vgm](https://github.com/SudoMaker/midi2vgm)
+- [Digilent Zybo 手册](https://digilent.com/reference/_media/reference/programmable-logic/zybo/zybo_rm.pdf)
+- [USB-MIDI 1.0 规范](https://www.usb.org/sites/default/files/midi10.pdf)
 - [YMF262 数据手册](docs/ymf262.pdf)
-- [OPL4 数据手册](docs/opl4.pdf)
-- [OPL3 数学推导](docs/opl3math/opl3math.pdf)
-
-## 说明
-
-- 本地历史资料目录不属于正式构建依赖
-- `tools/` 用于放置本地第三方工具，默认不纳入版本管理
-- README 中使用的 `BD / RTL` 图片来自当前仓库导出的实际构建结果
