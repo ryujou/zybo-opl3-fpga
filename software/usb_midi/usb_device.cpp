@@ -23,6 +23,11 @@ XScuGic gic;
 alignas(32) uint8_t dma_memory[64 * 1024];
 alignas(32) uint8_t reply[128];
 MidiUsbEvent queue[1024];
+uint8_t vgm_queue[8192];
+alignas(32) uint8_t bulk_tx[64];
+volatile unsigned vgm_head = 0, vgm_tail = 0;
+volatile bool tx_busy = false;
+bool vgm_mode = false;
 volatile unsigned head = 0, tail = 0;
 volatile bool reset_pending = false;
 volatile uint8_t configured = 0;
@@ -38,6 +43,7 @@ void irq_unlock(uint32_t cpsr) {
 }
 void request_reset() {
     reset_pending = true;
+    tx_busy = false;
     ++resets;
 }
 bool reset_endpoint(unsigned ep, uint8_t direction) {
@@ -75,6 +81,11 @@ void send_reply(size_t size, uint16_t requested) {
 bool valid_endpoint(uint16_t ep) { return ep == 0 || ep == 0x80 || ep == 1 || ep == 0x81; }
 
 void setup(const XUsbPs_SetupData &s) {
+    if (vgm_mode && s.bmRequestType == 0xC0 && s.bRequest == 0x20 && s.wIndex == 4 && s.wValue == 0) {
+        std::memcpy(reply, vgm_ms_compat_descriptor, sizeof(vgm_ms_compat_descriptor));
+        send_reply(sizeof(vgm_ms_compat_descriptor), s.wLength);
+        return;
+    }
     if ((s.bmRequestType & 0x60) != 0) { stall(); return; }
     const uint8_t recipient = s.bmRequestType & 0x1F;
     switch (s.bRequest) {
@@ -84,11 +95,11 @@ void setup(const XUsbPs_SetupData &s) {
         size_t size = 0;
         if (type == 1 && index == 0) {
             size = sizeof(midi_device_descriptor);
-            std::memcpy(reply, midi_device_descriptor, size);
+            std::memcpy(reply, vgm_mode ? vgm_device_descriptor : midi_device_descriptor, size);
         } else if (type == 2 && index == 0) {
-            size = sizeof(midi_config_descriptor);
-            std::memcpy(reply, midi_config_descriptor, size);
-        } else if (type == 3) size = midi_string_descriptor(index, reply);
+            size = vgm_mode ? sizeof(vgm_config_descriptor) : sizeof(midi_config_descriptor);
+            std::memcpy(reply, vgm_mode ? vgm_config_descriptor : midi_config_descriptor, size);
+        } else if (type == 3) size = vgm_mode ? vgm_string_descriptor(index, reply) : midi_string_descriptor(index, reply);
         if (!size) break;
         send_reply(size, s.wLength);
         return;
@@ -129,7 +140,7 @@ void setup(const XUsbPs_SetupData &s) {
         if (!(s.bmRequestType & 0x80) || s.wValue || s.wLength != 2) break;
         reply[0] = reply[1] = 0;
         if (recipient == 0 && s.wIndex == 0) reply[0] = 1; // self-powered
-        else if (recipient == 1 && configured && s.wIndex < 2) {}
+        else if (recipient == 1 && configured && s.wIndex < (vgm_mode ? 1 : 2)) {}
         else if (recipient == 2 && valid_endpoint(s.wIndex)) {
             const uint32_t reg = XUsbPs_ReadReg(usb.Config.BaseAddress,
                 XUSBPS_EPCRn_OFFSET(s.wIndex & 15));
@@ -154,12 +165,12 @@ void setup(const XUsbPs_SetupData &s) {
         return;
     }
     case 10: // GET_INTERFACE
-        if (s.bmRequestType != 0x81 || !configured || s.wIndex > 1 || s.wValue || s.wLength != 1) break;
+        if (s.bmRequestType != 0x81 || !configured || s.wIndex >= (vgm_mode ? 1 : 2) || s.wValue || s.wLength != 1) break;
         reply[0] = 0;
         send_reply(1, 1);
         return;
     case 11: // Only alternate setting zero exists.
-        if (s.bmRequestType != 1 || !configured || s.wIndex > 1 || s.wValue || s.wLength) break;
+        if (s.bmRequestType != 1 || !configured || s.wIndex >= (vgm_mode ? 1 : 2) || s.wValue || s.wLength) break;
         send_reply(0, 0);
         return;
     }
@@ -187,6 +198,7 @@ void ep0_handler(void *, u8 ep, u8 event, void *) {
 }
 
 void ep1_handler(void *, u8 ep, u8 event, void *) {
+    if (event == XUSBPS_EP_EVENT_DATA_TX) { tx_busy = false; return; }
     if (event != XUSBPS_EP_EVENT_DATA_RX) return;
     u8 *buffer; u32 size, handle;
     if (XUsbPs_EpBufferReceive(&usb, ep, &buffer, &size, &handle) != XST_SUCCESS) {
@@ -194,7 +206,17 @@ void ep1_handler(void *, u8 ep, u8 event, void *) {
         return;
     }
     Xil_DCacheInvalidateRange(reinterpret_cast<INTPTR>(buffer), (size + 31) & ~31U);
-    if (size % 4) {
+    if (vgm_mode) {
+        if (configured && !reset_pending) {
+            for (u32 i = 0; i < size; ++i) {
+                const unsigned next = (vgm_tail + 1) % sizeof(vgm_queue);
+                if (next == vgm_head) { ++overflows; request_reset(); break; }
+                vgm_queue[vgm_tail] = buffer[i];
+                asm volatile("dmb sy" ::: "memory");
+                vgm_tail = next;
+            }
+        }
+    } else if (size % 4) {
         ++malformed;
         request_reset();
     } else if (configured && !reset_pending) {
@@ -237,7 +259,12 @@ void bus_handler(void *, u32 mask) {
 }
 }
 
-int midi_usb_init() {
+int midi_usb_init(bool use_vgm) {
+    vgm_mode = use_vgm;
+    head = tail = vgm_head = vgm_tail = 0;
+    configured = 0;
+    reset_pending = false;
+    tx_busy = false;
     XUsbPs_Config *config = XUsbPs_LookupConfig(XPAR_XUSBPS_0_BASEADDR);
     if (!config) return XST_FAILURE;
     int status = XUsbPs_CfgInitialize(&usb, config, config->BaseAddress);
@@ -279,7 +306,7 @@ int midi_usb_init() {
     const u32 mask = XUSBPS_IXR_UR_MASK | XUSBPS_IXR_UE_MASK | XUSBPS_IXR_PC_MASK;
     if (XUsbPs_IntrSetHandler(&usb, bus_handler, nullptr, mask) != XST_SUCCESS ||
         XUsbPs_EpSetHandler(&usb, 0, XUSBPS_EP_DIRECTION_OUT | XUSBPS_EP_DIRECTION_IN, ep0_handler, nullptr) != XST_SUCCESS ||
-        XUsbPs_EpSetHandler(&usb, 1, XUSBPS_EP_DIRECTION_OUT, ep1_handler, nullptr) != XST_SUCCESS)
+        XUsbPs_EpSetHandler(&usb, 1, XUSBPS_EP_DIRECTION_OUT | XUSBPS_EP_DIRECTION_IN, ep1_handler, nullptr) != XST_SUCCESS)
         return XST_FAILURE;
     XScuGic_Enable(&gic, intr);
     Xil_ExceptionEnable();
@@ -301,7 +328,14 @@ bool midi_usb_pop(MidiUsbEvent &event) {
 bool midi_usb_take_reset() {
     const uint32_t flags = irq_lock();
     const bool pending = reset_pending;
-    if (pending) { head = tail; reset_pending = false; }
+    if (pending) {
+        if (vgm_mode) {
+            // Retire an IN transfer abandoned by a host that stopped reading.
+            if (!reset_endpoint(1, XUSBPS_EP_DIRECTION_IN)) ++midi_usb_send_errors;
+            if (configured) XUsbPs_EpEnable(&usb, 1, XUSBPS_EP_DIRECTION_IN);
+        }
+        head = tail; vgm_head = vgm_tail; tx_busy = false; reset_pending = false;
+    }
     irq_unlock(flags);
     return pending;
 }
@@ -311,4 +345,40 @@ MidiUsbStats midi_usb_stats() {
     MidiUsbStats stats = {received, overflows, malformed, resets, midi_usb_send_errors};
     irq_unlock(flags);
     return stats;
+}
+
+void midi_usb_shutdown() {
+    const u16 intr = XGet_IntrId(usb.Config.IntrId) + XGet_IntrOffset(usb.Config.IntrId);
+    XScuGic_Disable(&gic, intr);
+    XUsbPs_IntrDisable(&usb, XUSBPS_IXR_ALL);
+    XUsbPs_ClrBits(&usb, XUSBPS_OTGCSR_OFFSET, XUSBPS_OTGSC_OT_MASK);
+    XUsbPs_Stop(&usb);
+    configured = 0;
+    tx_busy = false;
+}
+
+bool vgm_usb_read(uint8_t *value) {
+    const uint32_t flags = irq_lock();
+    const bool available = !reset_pending && vgm_head != vgm_tail;
+    if (available) { *value = vgm_queue[vgm_head]; vgm_head = (vgm_head + 1) % sizeof(vgm_queue); }
+    irq_unlock(flags);
+    return available;
+}
+
+void vgm_usb_write(const uint8_t *data, size_t size) {
+    if (!configured || reset_pending) return;
+    for (size_t offset = 0; offset < size;) {
+        const size_t count = size - offset > sizeof(bulk_tx) ? sizeof(bulk_tx) : size - offset;
+        std::memcpy(bulk_tx, data + offset, count);
+        Xil_DCacheFlushRange(reinterpret_cast<INTPTR>(bulk_tx), sizeof(bulk_tx));
+        tx_busy = true;
+        if (XUsbPs_EpBufferSend(&usb, 1, bulk_tx, count) != XST_SUCCESS) {
+            ++midi_usb_send_errors; request_reset(); return;
+        }
+        // A host that disconnects or stops reading must not block switch handling.
+        unsigned remaining = 1000;
+        while (tx_busy && configured && !reset_pending && --remaining) usleep(100);
+        if (!remaining || !configured || reset_pending) { request_reset(); return; }
+        offset += count;
+    }
 }

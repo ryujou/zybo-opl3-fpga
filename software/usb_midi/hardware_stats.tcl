@@ -11,6 +11,8 @@ foreach line [split $symbols \n] {
 connect -url tcp:localhost:3121
 targets -set -nocase -filter {name =~ "*Cortex-A9 MPCore #0*"}
 foreach name {
+    opl_requested_mode opl_active_mode opl_switch_level
+    g_debug_buffered_stage g_debug_buffered_events_done
     midi_processed_events midi_max_dispatch_us midi_max_handler_us
     {(anonymous namespace)::received} {(anonymous namespace)::overflows}
     {(anonymous namespace)::malformed} {(anonymous namespace)::resets}

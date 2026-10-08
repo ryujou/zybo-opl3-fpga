@@ -11,7 +11,7 @@ LIB = ROOT / "third_party/libadlmidi"
 OUT = ROOT / "build/usb_midi"
 PLATFORM = ROOT / "vitis_project/opl3_platform/export/opl3_platform"
 VITIS = Path(os.environ.get("XILINX_VITIS", "J:/FPGA/2025.2/Vitis"))
-DEFINES = ["ADLMIDI_FPGA", "ADLMIDI_DISABLE_MIDI_SEQUENCER",
+DEFINES = ["OPL_DUAL_MODE", "ADLMIDI_FPGA", "ADLMIDI_DISABLE_MIDI_SEQUENCER",
            "ADLMIDI_DISABLE_NUKED_EMULATOR", "ADLMIDI_DISABLE_DOSBOX_EMULATOR",
            "ADLMIDI_DISABLE_OPAL_EMULATOR", "ADLMIDI_DISABLE_JAVA_EMULATOR"]
 LIB_SOURCES = [LIB / "src" / name for name in (
@@ -48,14 +48,14 @@ def main():
         bin_dir = VITIS / "gnu/aarch32/nt/gcc-arm-none-eabi/bin"
         cxx, cc = bin_dir / "arm-none-eabi-g++.exe", bin_dir / "arm-none-eabi-gcc.exe"
         bsp = PLATFORM / "sw/standalone_ps7_cortexa9_0"
-        for path in (bsp / "include/xparameters.h", bsp / "lib/libxil.a", ROOT / "fpga/build/opl3.bit"):
+        for path in (bsp / "include/xparameters.h", bsp / "lib/libxil.a", OUT / "opl3_dual.bit"):
             if not path.is_file():
                 parser.error(f"missing platform artifact: {path}; build the existing OPL3 platform first")
         includes += [bsp / "include"]
         defines += ["SDT"]
         flags += ["-mcpu=cortex-a9", "-mfpu=vfpv3", "-mfloat-abi=hard", "-Wno-psabi", f"-specs={bsp / 'Xilinx.spec'}"]
-        sources += [HERE / name for name in ("main.cpp", "usb_device.cpp", "timer.cpp")]
-        sources += [ROOT / "software/src" / name for name in ("opl_hw.cpp", "ssm2603.cpp")]
+        sources += [HERE / name for name in ("main.cpp", "usb_device.cpp", "timer.cpp", "vgm_transport.cpp")]
+        sources += [ROOT / "software/src" / name for name in ("opl_hw.cpp", "ssm2603.cpp", "opl_stream.cpp")]
         destination = OUT / "opl3_usb_midi.elf"
         link_flags = [f"-L{bsp / 'lib'}", f"-T{ROOT / 'software/src/lscript.ld'}",
                       "-Wl,--defsym,_HEAP_SIZE=0x400000", "-Wl,--defsym,_STACK_SIZE=0x10000",
@@ -87,7 +87,7 @@ def build_boot():
         raise FileNotFoundError(fsbl)
     bif.write_text('the_ROM_image:\n{\n'
                    f'  [bootloader] "{fsbl.as_posix()}"\n'
-                   f'  "{(ROOT / "fpga/build/opl3.bit").as_posix()}"\n'
+                   f'  "{(OUT / "opl3_dual.bit").as_posix()}"\n'
                    f'  "{(OUT / "opl3_usb_midi.elf").as_posix()}"\n'
                    '}\n', encoding="utf-8")
     run([VITIS / "bin/bootgen.bat", "-image", bif, "-arch", "zynq", "-o", OUT / "BOOT.bin", "-w", "on"])

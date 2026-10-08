@@ -167,7 +167,7 @@ class PlayerThread(QThread):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Zybo OPL3 复古音乐播放器")
+        self.setWindowTitle("Zybo OPL3 VGM/VGZ 播放器")
         self.resize(820, 380)
 
         self.song: Optional[LoadedSong] = None
@@ -177,6 +177,7 @@ class MainWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
+        layout.addWidget(QLabel("SW0 开启：直接播放 VGM/VGZ；SW0 关闭：使用 MIDI 播放器选择 Zybo OPL3 MIDI。"))
 
         conn_group = QGroupBox("设备")
         conn_layout = QGridLayout(conn_group)
@@ -293,7 +294,7 @@ class MainWindow(QMainWindow):
             self,
             "选择音乐文件",
             str(Path("midi").resolve()),
-            "支持的文件 (*.mid *.midi *.vgm *.vgz)",
+            "VGM / VGZ (*.vgm *.vgz)",
         )
         if not path:
             return
@@ -401,7 +402,7 @@ def load_song(path: str) -> LoadedSong:
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("Zybo OPL3 复古音乐播放器")
+    app.setApplicationName("Zybo OPL3 VGM/VGZ 播放器")
     window = MainWindow()
     window.show()
     return app.exec()

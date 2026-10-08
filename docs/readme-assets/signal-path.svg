@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="350" viewBox="0 0 1200 350" role="img" aria-labelledby="title desc">
-  <title id="title">MIDI and audio signal path</title>
-  <desc id="desc">VGM and VGZ convert to MIDI on the host. A Windows MIDI player sends USB-MIDI to the Zynq ARM, libADLMIDI writes FPGA OPL3 registers through AXI, and stereo I2S goes to the SSM2603 headphone output.</desc>
+  <title id="title">MIDI and VGM audio signal path</title>
+  <desc id="desc">SW0 selects direct VGM register playback or USB-MIDI. A Windows MIDI player sends USB-MIDI to the Zynq ARM, libADLMIDI writes FPGA OPL3 registers through AXI, and stereo I2S goes to the SSM2603 headphone output.</desc>
   <defs>
     <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
       <path d="M0 1L6 4L0 7" fill="none" stroke="#47848b" stroke-width="1.5"/>
@@ -8,22 +8,22 @@
   </defs>
   <rect x="1" y="1" width="1198" height="348" rx="16" fill="#f8fafc" stroke="#dce5ed"/>
   <g font-family="Segoe UI, Arial, sans-serif">
-    <text x="46" y="40" fill="#273d51" font-size="17" font-weight="600">A single MIDI playback path</text>
+    <text x="46" y="40" fill="#273d51" font-size="17" font-weight="600">SW0 selects the input · FPGA generates the sound</text>
     <rect x="316" y="137" width="853" height="171" rx="14" fill="#edf3f6"/>
     <text x="52" y="147" fill="#6b8194" font-size="10" font-weight="600" letter-spacing="1.4">WINDOWS HOST</text>
     <text x="339" y="156" fill="#6b8194" font-size="10" font-weight="600" letter-spacing="1.4">ZYBO / XC7Z010</text>
     <rect x="52" y="66" width="210" height="58" rx="9" fill="#e8f3f1" stroke="#badad3"/>
-    <text x="157" y="91" text-anchor="middle" fill="#276f66" font-size="15" font-weight="600">VGM / VGZ → .mid</text>
-    <text x="157" y="111" text-anchor="middle" fill="#628b83" font-size="11">Python + Qt converter</text>
-    <path d="M157 126V174" stroke="#47848b" stroke-width="1.7" marker-end="url(#arrow)"/>
+    <text x="157" y="91" text-anchor="middle" fill="#276f66" font-size="15" font-weight="600">VGM / VGZ · SW0 = 1</text>
+    <text x="157" y="111" text-anchor="middle" fill="#628b83" font-size="11">Direct OPL registers + timing</text>
+    <path d="M264 96H451V174" fill="none" stroke="#47848b" stroke-width="1.7" marker-end="url(#arrow)"/>
     <rect x="52" y="182" width="210" height="95" rx="10" fill="white" stroke="#bfcfdc"/>
-    <text x="157" y="211" text-anchor="middle" fill="#223b50" font-size="20" font-weight="600">MIDI player</text>
+    <text x="157" y="211" text-anchor="middle" fill="#223b50" font-size="20" font-weight="600">MIDI · SW0 = 0</text>
     <text x="157" y="237" text-anchor="middle" fill="#5c7388" font-size="12">Cynthia / WinMM</text>
     <text x="157" y="258" text-anchor="middle" fill="#7d8fa0" font-size="11">.mid files + event timing</text>
     <rect x="339" y="182" width="225" height="95" rx="10" fill="white" stroke="#accdcd"/>
     <text x="451" y="211" text-anchor="middle" fill="#24616c" font-size="20" font-weight="600">Zynq ARM</text>
-    <text x="451" y="237" text-anchor="middle" fill="#527b83" font-size="12">Bare metal · libADLMIDI</text>
-    <text x="451" y="258" text-anchor="middle" fill="#7d8fa0" font-size="11">bank 58 · voice allocation</text>
+    <text x="451" y="237" text-anchor="middle" fill="#527b83" font-size="12">MIDI: libADLMIDI bank 58</text>
+    <text x="451" y="258" text-anchor="middle" fill="#7d8fa0" font-size="11">VGM: original OPL registers</text>
     <rect x="642" y="182" width="225" height="95" rx="10" fill="white" stroke="#d6c2a2"/>
     <text x="754" y="211" text-anchor="middle" fill="#785f30" font-size="20" font-weight="600">FPGA OPL3</text>
     <text x="754" y="237" text-anchor="middle" fill="#8c794f" font-size="12">Hardware FM synthesis</text>
@@ -38,6 +38,6 @@
     <g font-size="10" fill="#55758a" text-anchor="middle">
       <text x="300" y="217">USB-MIDI 1.0</text><text x="601" y="217">AXI-Lite</text><text x="906" y="217">I²S</text>
     </g>
-    <text x="52" y="328" fill="#688091" font-size="12">USB carries MIDI events. Stereo audio comes from the board's headphone output.</text>
+    <text x="52" y="328" fill="#688091" font-size="12">MIDI: CAFE:4013 / system driver · VGM: CAFE:4012 / WinUSB · Stereo audio: J5</text>
   </g>
 </svg>

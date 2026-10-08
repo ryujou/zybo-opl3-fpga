@@ -35,27 +35,38 @@
 ## VGZ 转换与两首演奏
 
 - 纯 Python 命令行与 PySide6 GUI 均完成 `midi` 内全部 86 个 VGZ 到 `midi/converted` 的转换，保留专辑目录；84 个 OPL3 文件的两组寄存器均参与转换。
-- 当前 Python 输出为普通 SMF MIDI，共 376581 个音符、1237114 个事件，Note On/Off 配对完整；输出时长与 VGM 头部的 44.1 kHz 样本计数一致。FM 到 GM 音色及超过 15 组独立通道状态时的合并为近似转换。
-- 转换核心 7 项测试通过，覆盖 bank 58 匹配、音高/音量/声像/弯音、同时间戳 Key On/Off、共享同音、18 声部、节奏鼓组、采样时间、中文路径、VGZ、取消、畸形输入与 4-op 拒绝。
+- 当前 Python 输出为普通 SMF MIDI，共 376573 个音符、1234936 个事件，Note On/Off 配对完整；输出时长与 VGM 头部的 44.1 kHz 样本计数一致。FM 到 GM 音色及超过 15 组独立通道状态时的合并为近似转换。
+- 转换核心 9 项测试通过，覆盖 DRO2MIDI 参考评分、Doom 吉他/鼓组识别、bank 58 匹配、音高/音量/声像/弯音、同时间戳 Key On/Off、共享同音、18 声部、节奏鼓组、采样时间、中文路径、VGZ、取消、畸形输入与 4-op 拒绝。
+- 音色比较函数按固定提交 `c3890a869413282e590a2341d00aded24475cd9a` 的 DRO2MIDI `compareinstr()` 实现；与原 C++ NormalInstrument/BassDrum 评分对照 32761 组标准化输入，全部一致。Doom 源签名来自固定版本 libADLMIDI 的 DMX bank 14、16。
+- 《At Doom’s Gate》转换结果含过载吉他 GM program 29、失真吉他 30、贝斯 34，以及 MIDI 通道 10 的鼓组；没有 Honky-tonk Piano/program 3 的音符。未知音色和固定 bank 58 的音色差异仍属于近似转换。
 - GUI 整批转换成功 86/86，转换期间窗口持续响应；逐文件失败显示、失败后继续处理、取消和控件恢复均通过实测。
-- 板卡演奏验收使用的两首 MIDI 样本为《01 Introduction》98.601 秒和《02 At Doom's Gate》96.514 秒，经系统 MIDI 输出完整播放，总时长 195.1 秒、20622 条消息。板端处理/接收事件包均为 21538，队列溢出、畸形输入、USB 发送错误均为零；最大排队 398 µs、单事件处理 105 µs。
-- 两首演奏的 ILA 左/右 PCM 峰值分别为 10822/10822、1598/1574。停止后左侧范围 `[-8, 0]`、右侧 `[-9, 0]`，属于现有 OPL3 核一补码符号运算的低位静音残差。
-- Cynthia 使用 `Zybo OPL3 MIDI` 输出按 All Once 顺序完整播完上述两首，最后一首显示 `01m 36s 513ms`，全部 11809 个文件事件读取完毕并停止。两轮播放后板端累计处理/接收事件均为 44977，队列溢出、畸形输入和 USB 发送错误仍为零；最大排队 547 µs。
-- 板卡曲目测试只覆盖这两首样本。当前 Python 转换输出完成主机侧验证，尚未复测板卡演奏。
+- 两首当前转换 MIDI 已通过 Cynthia All Once 完整演奏，板端处理/接收包 24605/24605，溢出、畸形传输和发送错误均为零。GM 音色近似不代表原始 FM 听感。
+
+## SW0 双模式与原始 VGM/VGZ
+
+- `build_switch.tcl` 生成带 SW0 的 bitstream，布局布线和时序通过，bitstream DRC 为零错误。固件和三分区启动镜像已构建。
+- 板上读取 SW0 为 1，启动即枚举 `CAFE:4012` / `Zybo OPL3 USB Interface`，Windows 服务为 `WINUSB`。原播放器能完成 HELLO、上传、播放和状态查询。
+- 调试器触发切换至 `CAFE:4013` / `Zybo OPL3 MIDI`，Windows 系统类驱动正常；16 通道、鼓组、128 音色、控制器、触后、SysEx 和复位用例通过。两种身份分别枚举。
+- 全部 86 个原始 VGZ 能生成直接 OPL 播放数据，时长与头部采样数一致，均在 8 MiB 缓冲容量内。时间按累计采样数转换，保留末尾等待。
+- 原始《Introduction》98.600000 秒、10908 个事件、24503 次寄存器写入；《At Doom’s Gate》96.513197 秒、3560 个事件、27752 次写入，均通过 USB Bulk 完整演奏。主机完成检测为 98.766/96.765 秒，包含轮询间隔。
+- 两首播放后队列溢出、畸形输入和 USB 发送错误均为零；Doom 3560 个事件全部执行。最大 sbrk 申请 385504 字节，主栈写入水位 11528 字节。直接 VGM 模式绕过 MIDI 音色引擎。
+- 暂停/继续/停止、演奏中切换 VGM→MIDI、MIDI→VGM 后空状态和重新握手均通过。主机放弃读取 Bulk IN 应答时，固件有界退出并取消旧传输，后续 HELLO 恢复。
+- ARM 脚本构建和 Vitis 独立目标构建均通过；应用 text 432374、data 3492、bss 12757600 字节（包含 8 MiB 曲目缓冲及预留 heap/stack）。
 
 ## QSPI
 
 - 检测到板载 Spansion S25FL128S，容量 16 MiB，页大小 256 字节、擦除扇区 64 KiB。
-- `firmware/usb_midi/BOOT.bin` 共 2647492 字节，从地址 0 写入；擦除范围为 `0x000000–0x28FFFF`，未执行整片擦除。
+- `firmware/usb_midi/BOOT.bin` 共 2654348 字节，从地址 0 写入；擦除范围为 `0x000000–0x28FFFF`，未执行整片擦除。
 - `program_flash` 完整回读并逐字节比较成功，输出 `Verify Operation successful.`、`Flash Operation Successful`。
-- 烧录后已通过 JTAG 启动正式镜像，串口出现 `USB-MIDI ready: CAFE:4013, bank 58`；Windows 再次枚举为 `Zybo OPL3 MIDI`，状态正常。
-- 当前 BOOT_MODE 读取为 0，即 JP5 仍处于 JTAG 模式；QSPI 冷启动尚未物理验证，需要断电设置 JP5 后重新上电。
+- 镜像包含 FSBL、带 SW0 的 bitstream 和双模式 ELF。软件驱动和 JTAG 启动已验证，脱离 JTAG 冷启动独立验收。
+- QSPI 冷启动尚未物理验收，需要断电设置 JP5 后重新上电。
 
 ## 尚未物理验证
 
 - 耳机/音箱实际听感、模拟音频电平。
 - 实际拔插 USB 后再次播放。
+- 现场拨动 SW0 的运行时切换；当前 SW0=1 的启动读取已确认，来回切换通过调试器请求验证。
 - 脱离 JTAG 的 SD/QSPI 冷启动。
 - Falcosoft 和 Drumstick 的播放器界面兼容性。
 
-数字波形、Windows 枚举与成功构建不替代上述物理验证。正式 SD/QSPI 镜像使用 `fpga/build/opl3.bit`，不包含 ILA。
+数字波形、Windows 枚举与成功构建不替代上述物理验证。正式 SD/QSPI 镜像使用 `build/usb_midi/opl3_dual.bit`，不包含 ILA。

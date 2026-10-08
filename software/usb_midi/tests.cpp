@@ -69,6 +69,13 @@ void test_descriptors() {
     assert(midi_string_descriptor(0, text) == 4);
     assert(midi_string_descriptor(2, text) == 30);
     assert(midi_string_descriptor(0xEE, text) == 0);
+    assert(vgm_device_descriptor[10] == 0x12);
+    assert(vgm_config_descriptor[2] == sizeof(vgm_config_descriptor));
+    assert(vgm_config_descriptor[4] == 1 && vgm_config_descriptor[14] == 0xFF);
+    assert(vgm_config_descriptor[20] == 1 && vgm_config_descriptor[27] == 0x81);
+    assert(vgm_string_descriptor(0xEE, text) == 18 && text[16] == 0x20);
+    assert(vgm_ms_compat_descriptor[0] == 40);
+    assert(std::memcmp(vgm_ms_compat_descriptor + 18, "WINUSB", 6) == 0);
     std::puts("PASS descriptors: AC/MS topology, endpoint/jack links, strings, no WCID");
 }
 

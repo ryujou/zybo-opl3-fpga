@@ -5,3 +5,8 @@
 extern const uint8_t midi_device_descriptor[18];
 extern const uint8_t midi_config_descriptor[101];
 size_t midi_string_descriptor(uint8_t index, uint8_t *output);
+
+extern const uint8_t vgm_device_descriptor[18];
+extern const uint8_t vgm_config_descriptor[32];
+extern const uint8_t vgm_ms_compat_descriptor[40];
+size_t vgm_string_descriptor(uint8_t index, uint8_t *output);

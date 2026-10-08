@@ -52,6 +52,14 @@ def load_vgm_file(path: str) -> LoadedVgm:
     pending_delay_us = 0
     pending_writes: List[OplWrite] = []
     total_us = 0
+    total_samples = 0
+
+    def wait_us(samples: int) -> int:
+        nonlocal total_samples, total_us
+        previous = total_us
+        total_samples += samples
+        total_us = (total_samples * 1_000_000 + VGM_SAMPLE_RATE // 2) // VGM_SAMPLE_RATE
+        return total_us - previous
     pos = data_start
 
     while pos < min(len(data), command_end):
@@ -65,40 +73,35 @@ def load_vgm_file(path: str) -> LoadedVgm:
         if cmd == 0x61:
             wait_samples = _u16_checked(data, pos, cmd_offset, cmd)
             pos += 2
-            wait_us = _samples_to_us(wait_samples)
+            delay_us = wait_us(wait_samples)
             pending_delay_us = _flush_pending(events, pending_writes, pending_delay_us)
-            pending_delay_us += wait_us
-            total_us += wait_us
+            pending_delay_us += delay_us
             continue
 
         if cmd == 0x62:
-            wait_us = _samples_to_us(735)
+            delay_us = wait_us(735)
             pending_delay_us = _flush_pending(events, pending_writes, pending_delay_us)
-            pending_delay_us += wait_us
-            total_us += wait_us
+            pending_delay_us += delay_us
             continue
 
         if cmd == 0x63:
-            wait_us = _samples_to_us(882)
+            delay_us = wait_us(882)
             pending_delay_us = _flush_pending(events, pending_writes, pending_delay_us)
-            pending_delay_us += wait_us
-            total_us += wait_us
+            pending_delay_us += delay_us
             continue
 
         if 0x70 <= cmd <= 0x7F:
-            wait_us = _samples_to_us((cmd & 0x0F) + 1)
+            delay_us = wait_us((cmd & 0x0F) + 1)
             pending_delay_us = _flush_pending(events, pending_writes, pending_delay_us)
-            pending_delay_us += wait_us
-            total_us += wait_us
+            pending_delay_us += delay_us
             continue
 
         # YM2612 DAC write + wait n samples. We do not replay the DAC write for
         # an OPL-only player, but the wait must be preserved.
         if 0x80 <= cmd <= 0x8F:
-            wait_us = _samples_to_us(cmd & 0x0F)
+            delay_us = wait_us(cmd & 0x0F)
             pending_delay_us = _flush_pending(events, pending_writes, pending_delay_us)
-            pending_delay_us += wait_us
-            total_us += wait_us
+            pending_delay_us += delay_us
             continue
 
         # YM3812 / OPL2 first chip.
@@ -195,6 +198,9 @@ def load_vgm_file(path: str) -> LoadedVgm:
 
     if pending_writes:
         events.append(OplStreamEvent(delta_us=pending_delay_us, writes=list(pending_writes)))
+    elif pending_delay_us and events:
+        # Carry the final wait without changing any audible OPL register.
+        events.append(OplStreamEvent(delta_us=pending_delay_us, writes=[OplWrite(0, 0, 0)]))
 
     return LoadedVgm(events=events, total_us=total_us, title=file_path.name)
 

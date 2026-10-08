@@ -1,5 +1,5 @@
 set root [file normalize [file join [file dirname [info script]] ../..]]
-set bitfile [file join $root fpga/build/opl3.bit]
+set bitfile [file join $root build/usb_midi/opl3_dual.bit]
 if {[llength $argv]} { set bitfile [file normalize [lindex $argv 0]] }
 set elffile [file join $root build/usb_midi/opl3_usb_midi.elf]
 set vitis J:/FPGA/2025.2/Vitis

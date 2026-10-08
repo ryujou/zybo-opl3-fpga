@@ -9,6 +9,9 @@
 #include "xil_printf.h"
 #include "xparameters.h"
 #include "xstatus.h"
+#ifdef OPL_DUAL_MODE
+#include "xiltimer.h"
+#endif
 
 namespace {
 
@@ -33,11 +36,16 @@ constexpr u8 kVersionMajor = 2;
 constexpr u8 kVersionMinor = 0;
 constexpr size_t kQueueCapacity = 2048;
 constexpr size_t kSongBufferSize = 8 * 1024 * 1024;
+#ifdef OPL_DUAL_MODE
+constexpr u64 kGlobalTimerCorrection = 1;
+constexpr u64 kGlobalTimerCountsPerSecond = COUNTS_PER_SECOND;
+#else
 constexpr u64 kGlobalTimerCorrection = 4;
 constexpr u64 kGlobalTimerCountsPerSecond = XPAR_CPU_CORE_CLOCK_FREQ_HZ / 2;
-constexpr u64 kGlobalTimerCountsPerMicrosecond = kGlobalTimerCountsPerSecond / 1000000ULL;
 using XTime = u64;
 extern "C" void XTime_GetTime(XTime *time_value);
+#endif
+constexpr u64 kGlobalTimerCountsPerMicrosecond = kGlobalTimerCountsPerSecond / 1000000ULL;
 
 struct QueuedWrite {
 	u32 delay_us;
@@ -92,6 +100,7 @@ struct BufferedSongState {
 	BufferedEvent current_event = {};
 };
 
+FrameParser g_parser;
 QueueState g_queue;
 bool g_stream_playback_armed = false;
 u64 g_stream_next_deadline_us = 0;
@@ -129,7 +138,11 @@ u64 now_ticks()
 
 u64 microseconds_to_ticks(u32 delay_us)
 {
-	return static_cast<u64>(delay_us) * kGlobalTimerCountsPerMicrosecond;
+	#ifdef OPL_DUAL_MODE
+    return static_cast<u64>(delay_us) * kGlobalTimerCountsPerSecond / 1000000ULL;
+#else
+    return static_cast<u64>(delay_us) * kGlobalTimerCountsPerMicrosecond;
+#endif
 }
 
 u8 calc_checksum(u8 type, u16 length, const u8 *payload)
@@ -405,6 +418,7 @@ void service_buffered_playback()
 		XTime_GetTime(&end_ticks);
 		g_debug_buffered_end_ticks = end_ticks;
 		g_debug_buffered_stage = 3;
+        opl_reset_tracked();
 		return;
 	}
 
@@ -415,7 +429,11 @@ void service_buffered_playback()
 			return;
 		}
 
-		g_song.next_event_ticks = now_ticks() + microseconds_to_ticks(g_song.current_event.delay_us);
+		#ifdef OPL_DUAL_MODE
+        g_song.next_event_ticks += microseconds_to_ticks(g_song.current_event.delay_us);
+#else
+        g_song.next_event_ticks = now_ticks() + microseconds_to_ticks(g_song.current_event.delay_us);
+#endif
 		g_song.event_armed = true;
 	}
 
@@ -706,53 +724,48 @@ bool feed_parser(FrameParser *parser, u8 byte, bool *keep_running)
 
 } // namespace
 
+void stream_reset(void)
+{
+    queue_clear();
+    buffered_reset_metadata();
+    g_parser = {};
+    g_debug_jtag_play_request = 0;
+    opl_reset_tracked();
+}
+
+void stream_init(void)
+{
+    const TransportCapabilities &caps = transport_get_capabilities();
+    g_frame_payload_max = caps.max_frame_payload;
+    g_upload_chunk_bytes = caps.upload_chunk_bytes;
+    g_transport_flags = caps.transport_flags;
+    stream_reset();
+    if (caps.send_hello_on_open) send_hello();
+}
+
+bool stream_poll(void)
+{
+    bool keep_running = true;
+    if (g_debug_jtag_play_request != 0U) {
+        g_debug_jtag_play_request = 0;
+        g_debug_jtag_play_result = start_buffered_playback() ? 1U : 2U;
+    }
+    u8 byte = 0;
+    for (unsigned i = 0; i < 256 && keep_running && transport_read_byte(&byte); ++i)
+        feed_parser(&g_parser, byte, &keep_running);
+    service_stream_playback();
+    service_buffered_playback();
+    return keep_running;
+}
+
 int stream_session(void)
 {
-	if (transport_open_stream() != XST_SUCCESS) {
-		xil_printf("Transport init failed.\r\n");
-		return -1;
-	}
-
-	const TransportCapabilities &caps = transport_get_capabilities();
-	g_frame_payload_max = caps.max_frame_payload;
-	g_upload_chunk_bytes = caps.upload_chunk_bytes;
-	g_transport_flags = caps.transport_flags;
-
-	queue_clear();
-	buffered_reset_metadata();
-	opl_reset_tracked();
-	if (caps.send_hello_on_open) {
-		send_hello();
-	}
-
-	FrameParser parser;
-	bool keep_running = true;
-	while (keep_running) {
-		bool did_work = false;
-
-		if (g_debug_jtag_play_request != 0U) {
-			g_debug_jtag_play_request = 0;
-			g_debug_jtag_play_result = start_buffered_playback() ? 1U : 2U;
-			did_work = true;
-		}
-
-		u8 byte = 0;
-		while (transport_read_byte(&byte)) {
-			feed_parser(&parser, byte, &keep_running);
-			did_work = true;
-		}
-
-		service_stream_playback();
-		service_buffered_playback();
-		if (g_stream_playback_armed || g_queue.count != 0 || g_song.playback_active) {
-			did_work = true;
-		}
-
-		if (!did_work) {
-			TimerDelay(50);
-		}
-	}
-
-	transport_close_stream();
-	return 0;
+    if (transport_open_stream() != XST_SUCCESS) {
+        xil_printf("Transport init failed.\r\n");
+        return -1;
+    }
+    stream_init();
+    while (stream_poll()) TimerDelay(50);
+    transport_close_stream();
+    return 0;
 }

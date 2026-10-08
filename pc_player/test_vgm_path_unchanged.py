@@ -56,6 +56,11 @@ def run() -> None:
         built_vgz = build_preloaded_song(song_vgz)
         assert built_vgz.backend_name == 'vgm loader'
         assert built_vgz.data == built_vgm.data
+        assert song_vgm.total_us == round(751 * 1_000_000 / 44100)
+        assert sum(event.delta_us for event in song_vgm.events) == song_vgm.total_us
+        assert song_vgm.events[0].writes[0].reg == 0x20
+        assert song_vgm.events[1].writes[0].bank == 1
+        assert song_vgm.events[1].writes[0].value == 0x3F
     finally:
         config.MIDI_BACKEND = original_backend
         for path in (temp_vgm, temp_vgz):

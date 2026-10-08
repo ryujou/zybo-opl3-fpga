@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="title desc">
-  <title id="title">Zybo OPL3 USB-MIDI sound module</title>
-  <desc id="desc">Bare-metal Zynq MIDI processing, FPGA OPL3 synthesis, and a Python VGM to MIDI desktop converter.</desc>
+  <title id="title">Zybo OPL3 USB-MIDI and direct VGM sound module</title>
+  <desc id="desc">Bare-metal Zynq MIDI processing, FPGA OPL3 synthesis, and a SW0 mode selection and direct VGM register playback.</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
       <stop stop-color="#0b1626"/><stop offset="1" stop-color="#152b3b"/>
@@ -19,15 +19,15 @@
     <circle cx="73" cy="63" r="4" fill="#68d3c7"/>
     <text x="88" y="68" fill="#83d7ce" font-size="12" font-weight="600" letter-spacing="1.1">FPGA FM SYNTHESIS</text>
     <text x="54" y="157" fill="#f5f9fd" font-size="62" font-weight="700" letter-spacing="-2">ZYBO OPL3</text>
-    <text x="57" y="194" fill="#d4e0ec" font-size="20" font-weight="600" letter-spacing="2.5">USB-MIDI SOUND MODULE</text>
-    <text x="57" y="235" fill="#9fb4c8" font-size="17">From MIDI events to FPGA FM synthesis.</text>
+    <text x="57" y="194" fill="#d4e0ec" font-size="20" font-weight="600" letter-spacing="2.5">USB-MIDI + DIRECT VGM</text>
+    <text x="57" y="235" fill="#9fb4c8" font-size="17">From MIDI or VGM to FPGA FM synthesis.</text>
     <g font-size="12" fill="#d3e2eb">
       <rect x="57" y="268" width="109" height="32" rx="6" fill="#1c3546" stroke="#355569"/>
       <text x="74" y="289">USB-MIDI 1.0</text>
       <rect x="178" y="268" width="103" height="32" rx="6" fill="#1c3546" stroke="#355569"/>
       <text x="198" y="289">BARE METAL</text>
       <rect x="293" y="268" width="155" height="32" rx="6" fill="#1c3546" stroke="#355569"/>
-      <text x="311" y="289">VGM / VGZ CONVERTER</text>
+      <text x="311" y="289">DIRECT VGM / VGZ</text>
     </g>
     <path d="M760 128H808M760 256H808" stroke="#395e71" stroke-width="2"/>
     <circle cx="756" cy="128" r="4" fill="#54c6c1"/>
@@ -35,8 +35,8 @@
     <rect x="808" y="62" width="332" height="104" rx="13" fill="#132d3d" stroke="#3e697a"/>
     <rect x="808" y="62" width="5" height="104" rx="2" fill="#62c9c2"/>
     <text x="832" y="89" fill="#81d6ce" font-size="11" font-weight="600" letter-spacing="1.8">ZYNQ ARM</text>
-    <text x="832" y="123" fill="#edf5fa" font-size="24" font-weight="600">MIDI + libADLMIDI</text>
-    <text x="832" y="146" fill="#92b1c3" font-size="13">16 MIDI channels · bank 58</text>
+    <text x="832" y="123" fill="#edf5fa" font-size="24" font-weight="600">MIDI / direct VGM</text>
+    <text x="832" y="146" fill="#92b1c3" font-size="13">SW0 · MIDI bank 58 / OPL events</text>
     <path d="M973 168V194" stroke="#54c6c1" stroke-width="2" marker-end="url(#arrow)"/>
     <text x="990" y="188" fill="#80aaa9" font-size="11">AXI registers</text>
     <rect x="808" y="205" width="332" height="116" rx="13" fill="#152e3c" stroke="#76684b"/>
@@ -51,7 +51,7 @@
     </g>
     <g font-size="16" fill="#e1ebf2" font-weight="600">
       <text x="57" y="401">Digilent Zybo / XC7Z010</text>
-      <text x="310" y="401">Zybo OPL3 MIDI</text>
+      <text x="310" y="401">MIDI / VGM via SW0</text>
       <text x="646" y="401">Python + PySide6</text>
     </g>
     <text x="1140" y="400" text-anchor="end" fill="#62c9c2" font-size="12">Vivado / Vitis 2025.2</text>

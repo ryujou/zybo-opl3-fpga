@@ -42,8 +42,8 @@ else:
 
 app_src = workspace / name / "src"
 sources = COMMON_SOURCES + LIB_SOURCES
-sources += [HERE / n for n in ("main.cpp", "usb_device.cpp", "timer.cpp")]
-sources += [ROOT / "software/src" / n for n in ("opl_hw.cpp", "ssm2603.cpp")]
+sources += [HERE / n for n in ("main.cpp", "usb_device.cpp", "timer.cpp", "vgm_transport.cpp")]
+sources += [ROOT / "software/src" / n for n in ("opl_hw.cpp", "ssm2603.cpp", "opl_stream.cpp")]
 
 
 def relative(path):
