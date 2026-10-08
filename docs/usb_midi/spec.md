@@ -13,4 +13,6 @@
 
 统一使用标准 USB-MIDI 音源。VGZ 在电脑上转换为普通 MIDI 后播放，原 Bulk/UART 播放器停用。范围不包括 PetaLinux、USB 音频、MIDI 2.0、额外 Bulk 接口、QSPI 烧录。
 
+VGM/VGZ 转换使用纯 Python，提供 GUI 文件/目录选择、批量转换、输出目录、进度、取消和错误显示。首版支持本地 OPL2/OPL3 2-op 音乐，匹配固定 bank 58，输出标准 MIDI。
+
 验收包括 Windows 11 系统 MIDI 驱动与播放器兼容性、16 通道与鼓组/控制器、30 分钟代表性 MIDI 播放且队列零溢出、停止/重连无挂音，以及脱离 JTAG 的 SD 冷启动。目录内全部 86 个 VGZ 转换为 MIDI，选取两首完整播放。物理板验证状态独立记录。

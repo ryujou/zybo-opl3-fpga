@@ -45,16 +45,21 @@ python -B software/usb_midi/build.py --test --host-cxx 'J:/lumia/FPGA/OPL3/opl3_
 本机转换结果位于 `midi/converted`，与原 VGZ 保持相同的专辑子目录和文件名。输入音乐和转换结果是本地素材，不纳入版本控制。输出是普通 SMF MIDI，不包含私有寄存器 SysEx。
 
 ```powershell
-python -m pip install mido pyusb
-python -B tools/vgz2midi.py --build-converter
+python -m pip install mido PySide6
+python -B tools/vgz2midi_gui.py
+# 命令行批量转换，默认读取 midi 并输出到 midi/converted：
 python -B tools/vgz2midi.py
 ```
 
-此脚本使用 `mido`、现有 VGM 解码器及 Java 转换器 `build/usb_midi/converter/vgm3mid.jar`。`--build-converter` 下载 [Vgm3Mid](https://github.com/axelei/Vgm3Mid) 的固定提交 `9e92dacbaa7de000e5ef6a6b8c98b889726b2f16`，在临时目录编译并生成该 JAR；使用 22050 ticks/quarter、单次播放和正确的 OPL3 左右声像映射。构建需要 JDK（本机验证 JDK 24），播放转换结果只需要 MIDI 播放器。
+`tools/vgz2midi.py` 为纯 Python 转换核心，命令行只依赖 `mido`；`tools/vgz2midi_gui.py` 使用 PySide6。GUI 支持选择多个文件或文件夹、指定输出、保留子目录、显示进度与逐文件结果、停止转换。输出中同名 MIDI 会覆盖；不同输入指向同一输出时会明确报错。转换过程中窗口保持响应，单个失败不阻断其余文件。
 
-OPL3 的两个寄存器组分别转换，再将 18 个声部合并到一个 MIDI cable。相同音色、音量、声像和弯音状态可以共享 MIDI 通道；独立状态超过 15 组时近似合并。输出保留完整时长并补齐 Note Off；源文件不变。本工具用于本目录的 2-op 文件，不接受 4-op 文件。
+核心直接解析 OPL2/YM3812、OPL3/YMF262 的 2-op 寄存器和 OPL 节奏模式，以整数 44.1 kHz 采样数保留时间，输出 22050 ticks/quarter、500000 µs/quarter 的单次播放 SMF。音色参数匹配固定 libADLMIDI bank 58，精确匹配优先，其余匹配相近的旋律音色；对应音色的移调量用于还原 MIDI 音高。电平、左右声像和弯音映射为标准 MIDI 控制消息，鼓组使用通道 10。匹配表 `tools/opl_gm_bank58.json` 来源及许可证随表记录；转换工具按 GPL-3.0-or-later 提供，许可证见 `third_party/libadlmidi`。
+
+OPL3 两组寄存器的 18 个声部均参与转换。相同音色、音量、声像和弯音可以共享 MIDI 通道；独立状态超过 15 组时近似合并。输出保留完整时长并补齐 Note Off。本工具不接受 4-op、双芯片及非 OPL 芯片指令，失败时显示具体原因。
 
 VGZ 的 FM 音色转换为 GM Program 后只是近似，声部合并也可能改变包络或弯音；转换结果不承诺重现原始 VGZ 的音色或波形。板端依然按固定 bank 58 合成。
+
+转换核心验证：`python -B tools/test_vgz2midi.py`。当前 Python 输出的主机验证与板卡验收状态见 `progress.md`。
 
 接口与跳线依据 [Digilent Zybo 手册，USB OTG、音频及启动章节](https://digilent.com/reference/_media/reference/programmable-logic/zybo/zybo_rm.pdf)。USB 数据布局依据 [USB-MIDI 1.0 规范](https://www.usb.org/sites/default/files/midi10.pdf)。
 

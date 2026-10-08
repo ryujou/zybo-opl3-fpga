@@ -46,17 +46,16 @@ SD 启动：将 `build/usb_midi/BOOT.bin` 复制到 FAT32 microSD 根目录，�
 
 详细的 Vitis 应用构建、接线、JTAG/ILA 测试和 SD 操作见 [构建与启动说明](docs/usb_midi/project.md)，已验证与待物理验证项见 [实际验证状态](docs/usb_midi/progress.md)。
 
-## VGZ 转换
+## VGM/VGZ 转换
 
-本机的 86 个 VGZ 已转换为普通 MIDI，输出到 `midi/converted` 并保留原专辑目录。音乐输入与转换结果由本地提供，`midi` 目录不纳入版本控制。首次使用转换工具需安装 Python 依赖和构建 Java 转换器：
+纯 Python 转换器支持 OPL2/OPL3 的 2-op VGM 和 VGZ，提供桌面 GUI 和命令行。本机的 86 个 VGZ 已转换到 `midi/converted`，保留原专辑目录。音乐输入与转换结果由本地提供，`midi` 目录不纳入版本控制。
 
 ```powershell
-python -m pip install mido pyusb
-python -B tools/vgz2midi.py --build-converter
-python -B tools/vgz2midi.py
+python -m pip install mido PySide6
+python -B tools/vgz2midi_gui.py
 ```
 
-转换器构建需要 JDK（本机使用 JDK 24），运行使用 Java/Vgm3Mid 和 `mido`，对 OPL3 的两个寄存器组分别转换并合并声部。转换后的 GM 音色、包络和弯音可能与原始 VGZ 不同；具体转换依赖与通道约束见 [说明](docs/usb_midi/project.md#vgz-转-midi)。
+GUI 支持添加文件/文件夹、批量转换、进度、停止和逐文件错误信息，默认载入本地 `midi` 目录。也可用 `python -B tools/vgz2midi.py --source <文件或目录> --output <输出目录>`；命令行只依赖 `mido`。转换时根据固定 bank 58 的 FM 参数选择 GM 音色；音色、包络和超额通道状态仍属于近似转换。说明与验证状态见 [转换说明](docs/usb_midi/project.md#vgz-转-midi)。
 
 ## 固件源码
 
